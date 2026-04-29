@@ -17,6 +17,15 @@ A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show 
   <em>Now Playing page (left) &nbsp;·&nbsp; Lyrics page with synced scroll (right)</em>
 </p>
 
+<p align="center">
+  <img src="screenshots/now-playing.png" alt="Now Playing — Drugs N Hella Melodies" width="48%" />
+  <img src="screenshots/lyrics.png" alt="Lyrics — Nights by Frank Ocean" width="48%" />
+</p>
+
+<p align="center">
+  <em>Now Playing (left) &nbsp;·&nbsp; Synced lyrics view (right)</em>
+</p>
+
 ---
 
 ## ✨ Features
