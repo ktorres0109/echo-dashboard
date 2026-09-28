@@ -1,6 +1,6 @@
 # 🎵 Echo Show Spotify Dashboard
 
-A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show devices — synced lyrics, liked songs, queue, shuffle, weather, and more. One HTML file. No backend. No subscription.
+A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show devices — synced lyrics, liked songs, queue, shuffle, weather, and more. One page and a tiny self-hosted server. No subscription.
 
 > **Transparency note:** This entire project was built through conversation with [Claude AI](https://claude.ai) (free tier) — I prompted it, directed it, debugged it, and made every design decision. I don't write JavaScript or CSS. That's the point. If you're a recruiter: this shows I know how to use AI as a tool effectively, identify problems, and ship a working product. That's a skill in itself.
 
@@ -41,6 +41,13 @@ A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show 
 - **Clock & date** — pure JS, no dependencies.
 - **Touch support** — all scrubbers work with touch events for the Echo Show touchscreen.
 - **Responsive queue** — adapts to any screen width.
+- **Idle clock** — after 5 minutes with nothing playing, fades to a dim, slowly drifting clock (burn-in friendly). Tap to wake.
+- **Podcasts** — episodes show with show name and artwork.
+- **Wakes Spotify** — if playback went idle, Play transfers back to the last device instead of failing.
+- **Rate-limit aware** — adaptive polling (1s playing, slower when paused/hidden) and honors Spotify's `Retry-After`.
+- **Self-updating** — kiosks reload automatically when the server's files change.
+
+> **2026 note:** Spotify removed `/me/tracks` for development-mode apps in February 2026. Liked Songs now uses `/me/library`.
 
 ---
 
@@ -101,34 +108,34 @@ adb install freekiosk.apk
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
 2. Create an app
 3. Copy your **Client ID** and **Client Secret**
-4. Under **Redirect URIs**, add your dashboard URL (e.g. `https://yourname.github.io/echo-dashboard/dashboard.html`)
+4. Under **Redirect URIs**, add your dashboard URL (e.g. `https://dash.example.com/dashboard.html`)
 5. Enable **Web API** under APIs used
 6. Add your Spotify email under **Users and Access** (required in Development mode)
 
 ---
 
-### Step 4 — Edit the Dashboard
+### Step 4 — Configure & Run
 
-Open `dashboard.html` and update these lines near the top of the `<script>`:
+The dashboard is now a static page plus a tiny Python server (standard library only) that keeps your Spotify **client secret off the page** — the browser never sees it.
 
-```js
-const SP_ID  = 'your-spotify-client-id';    // required
-const SP_SEC = 'your-spotify-client-secret'; // required
+```bash
+cp .env.example .env        # fill in SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET / SPOTIFY_REDIRECT_URI
+docker compose up -d        # serves on 127.0.0.1:8766
 ```
 
-> **Don't use Home Assistant?** Once you connect via Spotify OAuth (Step 5), everything routes through Spotify directly — play, pause, skip, seek, volume, shuffle, loop, queue, liked songs, lyrics. HA is optional.
+No Docker? `set -a; . ./.env; python3 server.py` works too.
+
+The page is served at `/dashboard.html` (and `/local/dashboard.html`, for older setups whose Spotify redirect URI points there). Your `SPOTIFY_REDIRECT_URI` must exactly match one registered on the Spotify app.
+
+Optional: set `WEATHER_LAT` / `WEATHER_LON` in `.env` — Echo Show kiosk browsers often can't do geolocation.
 
 ---
 
-### Step 5 — Host It
+### Step 5 — Expose It
 
-Host `dashboard.html` anywhere:
+Point a hostname at `http://localhost:8766` — e.g. a Cloudflare Tunnel public hostname. Then open it, tap **Connect Spotify**, log in, and approve. The refresh token lives in that browser's `localStorage`, so each Echo connects once.
 
-- **GitHub Pages** (free): push to a repo, enable Pages → `https://yourname.github.io/repo/dashboard.html`
-- **Cloudflare Pages** (free): drag and drop
-- **Your own domain**: just serve the static file
-
-Then open it, click **Connect Spotify**, log in, and approve. Done — token is saved to `localStorage`.
+When you update the files, open dashboards reload themselves within 5 minutes — no need to touch the Echo.
 
 ---
 
@@ -146,7 +153,7 @@ Spotify Connect means any device logged into your account sees the same playback
 
 ## 🚫 Do I Need Home Assistant?
 
-**No.** HA was used in early development as a Spotify proxy, but everything now runs through the Spotify Web API directly after OAuth. HA is kept in the code as an optional fallback for basic controls if you haven't connected OAuth yet. You can ignore it entirely.
+**No.** HA was used in early development as a Spotify proxy. v2 removed it entirely — everything goes through the Spotify Web API directly.
 
 ---
 

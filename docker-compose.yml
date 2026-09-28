@@ -1,0 +1,16 @@
+services:
+  echo-dashboard:
+    container_name: echo-dashboard
+    image: python:3.13-alpine
+    working_dir: /app
+    command: ["python", "-u", "server.py"]
+    volumes:
+      - ./:/app:ro
+    env_file: .env
+    ports:
+      - "127.0.0.1:8766:8766"   # cloudflared (host network) reaches it at http://localhost:8766
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8766/healthz"]
+      interval: 60s
+      timeout: 5s
