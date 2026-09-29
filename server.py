@@ -26,16 +26,16 @@ REDIRECT_URI = os.environ.get(
 )
 WEATHER_LAT = os.environ.get("WEATHER_LAT") or None
 WEATHER_LON = os.environ.get("WEATHER_LON") or None
-# Night dimming window in local hours (e.g. 22 → 7). Set NIGHT_START empty to disable.
-NIGHT_START = os.environ.get("NIGHT_START", "22")
+# Night dimming window in local hours (e.g. 23 → 7). Set NIGHT_START empty to disable.
+NIGHT_START = os.environ.get("NIGHT_START", "23")
 NIGHT_END = os.environ.get("NIGHT_END", "7")
 NIGHT_DIM = os.environ.get("NIGHT_DIM", "0.6")
 
 # Paths the kiosk or Spotify's redirect may hit → file in public/
 ROUTES = {
-    "/": "dashboard.html",
-    "/dashboard.html": "dashboard.html",
-    "/local/dashboard.html": "dashboard.html",  # the redirect URI registered with Spotify
+    "/": "index.html",
+    "/dashboard.html": "index.html",
+    "/local/dashboard.html": "index.html",  # the redirect URI registered with Spotify
     "/app.js": "app.js",
 }
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8"}

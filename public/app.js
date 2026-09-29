@@ -1,44 +1,40 @@
-// Echo Dashboard — Spotify now-playing for Echo Show kiosks.
-// All Spotify calls go straight from the browser to api.spotify.com; the only
-// thing the local server does is hold the client secret for token exchange/refresh.
+// Echo Dashboard — Spotify-style now playing + clock for Echo Show kiosks.
+// All Spotify calls go straight from the browser to api.spotify.com; the local
+// server only holds the client secret for token exchange/refresh.
 
 // ── Config (filled from /api/config) ───────────────────────
 let CFG = { client_id: '', redirect_uri: '', lat: null, lon: null, version: '' };
 const SP_API    = 'https://api.spotify.com/v1';
-// Must stay identical to the old build so tokens already saved on the Echo keep working.
+// Must stay identical across versions so tokens saved on the Echo keep working.
 const SP_SCOPES = 'user-read-playback-state user-read-currently-playing user-library-read user-library-modify user-modify-playback-state';
 const IDLE_AFTER_MS = 5 * 60 * 1000;
 
 // ── State ──────────────────────────────────────────────────
-let isPlaying = false, isShuffle = false, isLiked = false, isLoop = false;
+let isPlaying = false, isShuffle = false, isLiked = false, repeatState = 'off';
 let duration = 0, position = 0, volume = 50;
-let progressInterval = null, lastArt = '', lastTrack = '';
-let intervalStartPos = 0, intervalStartTime = 0;
+let basePos = 0, baseTime = 0;           // position = basePos + time since baseTime (while playing)
+let lastArt = '', lastTrack = '';
 let isDragging = false, activeScrubber = 'main';
 let onLyricsPage = false, queueOpen = false, userRequestedLyrics = false;
 let currentTrackId = null, currentItemType = 'track';
-let controlLockUntil = 0;      // ignore polled play/shuffle/loop right after a tap
+let controlLockUntil = 0;                // ignore polled play/shuffle/repeat right after a tap
 let idleSince = Date.now(), idleShown = false;
 
 const $ = id => document.getElementById(id);
+const $$ = sel => document.querySelectorAll(sel);
 
 function fmt(s) {
   s = Math.floor(s || 0);
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
-
-function setProgress(pos, dur) {
-  const pct = dur > 0 ? Math.min((pos / dur) * 100, 100) : 0;
-  ['main', 'lyrics'].forEach(id => {
-    const f = $('fill-' + id), t = $('thumb-' + id), p = $('pos-' + id), d = $('dur-' + id);
-    if (f) f.style.width = pct + '%';
-    if (t) t.style.left  = pct + '%';
-    if (p) p.textContent = fmt(pos);
-    if (d) d.textContent = fmt(dur);
-  });
-}
-
 function setStatus(ok) { $('status-dot').classList.toggle('show', !ok); }
+
+// ── Icons ──────────────────────────────────────────────────
+const ICON_PLAY  = '<path d="M8 5v14l11-7z"/>';
+const ICON_PAUSE = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+const ICON_ADD   = '<circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.5v9M7.5 12h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>';
+const ICON_ADDED = '<circle cx="12" cy="12" r="10.5" fill="#1ed760"/><path d="M7.3 12.4l3.1 3.1 6.3-6.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+const ICON_SPEAKER = '<svg width="14" height="14" viewBox="0 0 24 24"><path d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 1.99 2 1.99L17 22c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-5 2c1.1 0 2 .9 2 2s-.9 2-2 2c-1.11 0-2-.9-2-2s.89-2 2-2zm0 16c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>';
 
 // ── Page switching ─────────────────────────────────────────
 function goToLyrics() {
@@ -46,8 +42,8 @@ function goToLyrics() {
   onLyricsPage = true;
   $('page-main').classList.remove('active');
   $('page-lyrics').classList.add('active');
-  currentLyricIdx = -1;
-  syncLyrics(position);
+  currentLyricIdx = -2;
+  syncLyrics(position, true);
 }
 function goToMain() {
   userRequestedLyrics = false;
@@ -57,25 +53,39 @@ function goToMain() {
 }
 
 function setDeviceLabel(name) {
-  const text = name ? 'Now playing on ' + name : '';
-  $('device-label').textContent = text;
-  $('device-label-lyrics').textContent = text;
+  ['device-label', 'device-label-lyrics'].forEach(id => {
+    const el = $(id);
+    if (!name) { el.innerHTML = ''; return; }
+    el.innerHTML = ICON_SPEAKER;
+    el.append(' ' + name);
+  });
 }
 
-// ── Progress ticker (wall-clock based so JS jitter doesn't drift) ──
-function startProgressInterval(fromPos) {
-  stopProgressInterval();
-  intervalStartPos  = fromPos;
-  intervalStartTime = Date.now() - 250;
-  progressInterval = setInterval(() => {
-    const elapsed = (Date.now() - intervalStartTime) / 1000;
-    position = Math.min(intervalStartPos + elapsed, duration);
-    setProgress(position, duration);
-    if (onLyricsPage) syncLyrics(position);
-  }, 100);
+// ── Smooth progress (requestAnimationFrame + transforms, no stepping) ──
+function currentPos() {
+  if (!isPlaying) return basePos;
+  return Math.min(basePos + (performance.now() - baseTime) / 1000, duration || Infinity);
 }
-function stopProgressInterval() {
-  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+function setBase(p) { basePos = p; baseTime = performance.now(); position = p; }
+
+const shownTimes = {};
+function renderProgress(pos, dur) {
+  const pct = dur > 0 ? Math.max(0, Math.min(pos / dur, 1)) : 0;
+  ['main', 'lyrics'].forEach(id => {
+    $('fill-' + id).style.transform = 'scaleX(' + pct + ')';
+    $('rail-' + id).style.transform = 'translateX(' + (pct * 100) + '%)';
+    const p = fmt(pos), d = fmt(dur);
+    if (shownTimes['p' + id] !== p) { $('pos-' + id).textContent = p; shownTimes['p' + id] = p; }
+    if (shownTimes['d' + id] !== d) { $('dur-' + id).textContent = d; shownTimes['d' + id] = d; }
+  });
+}
+function frame() {
+  if (!isDragging && !document.hidden && !idleShown) {
+    position = currentPos();
+    renderProgress(position, duration);
+    if (onLyricsPage) syncLyrics(position);
+  }
+  requestAnimationFrame(frame);
 }
 
 // ── Spotify auth ───────────────────────────────────────────
@@ -89,7 +99,10 @@ function clearSpotifyTokens() {
   ['sp_access_token', 'sp_refresh_token', 'sp_token_expiry'].forEach(k => localStorage.removeItem(k));
 }
 function isConnected() { return !!(spAccessToken || spRefreshToken); }
-function showConnectButton() { $('sp-connect-btn').style.display = isConnected() ? 'none' : 'flex'; }
+function showConnectButton() {
+  $('sp-connect-btn').style.display = isConnected() ? 'none' : 'flex';
+  $('lyrics-btn-main').parentNode.style.display = isConnected() ? 'flex' : 'none';
+}
 
 function startSpotifyOAuth() {
   const state = Math.random().toString(36).slice(2);
@@ -104,17 +117,18 @@ function startSpotifyOAuth() {
 async function handleOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code'), state = params.get('state');
-  if (!code && !params.get('error')) return;
   if (code && state === localStorage.getItem('sp_oauth_state')) {
     const r = await fetch('/api/spotify/token', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code })
     });
     if (r.ok) saveSpotifyTokens(await r.json());
+    localStorage.removeItem('sp_oauth_state');
   }
-  localStorage.removeItem('sp_oauth_state');
-  // Spotify redirects to /local/dashboard.html; land back on the kiosk URL.
-  window.history.replaceState({}, '', '/dashboard.html');
+  // Spotify redirects to /local/dashboard.html, the refresh button adds ?_= — land back on the clean kiosk URL.
+  if (window.location.search || window.location.pathname !== '/dashboard.html') {
+    window.history.replaceState({}, '', '/dashboard.html');
+  }
 }
 
 let refreshInFlight = null;
@@ -177,16 +191,35 @@ async function sp(path, method = 'GET', body = null, retried = false) {
   return { ok: r.ok, status: r.status, data };
 }
 
+// Normalises tracks and podcast episodes into one shape.
+function itemInfo(item) {
+  if (!item) return { name: '', artist: '', album: '', art: '', artSmall: '' };
+  const imgs = item.type === 'episode' ? (item.images?.length ? item.images : item.show?.images || []) : (item.album?.images || []);
+  const base = {
+    name: item.name || '',
+    art: imgs[0]?.url || '',
+    artSmall: imgs[imgs.length - 1]?.url || ''
+  };
+  if (item.type === 'episode') {
+    return Object.assign(base, { artist: item.show?.publisher || item.show?.name || '', album: item.show?.name || '' });
+  }
+  return Object.assign(base, {
+    artist: item.artists?.map(a => a.name).join(', ') || '',
+    firstArtist: item.artists?.[0]?.name || '',
+    album: item.album?.name || ''
+  });
+}
+
 // ── Side panel (queue or device picker) ────────────────────
 let panelMode = null;
 function openPanel(mode) {
   panelMode = mode;
   queueOpen = true;
-  $('panel-title').textContent = mode === 'devices' ? 'Play on…' : 'Next Up';
+  $('panel-title').textContent = mode === 'devices' ? 'Connect to a device' : 'Queue';
   $('queue-list').innerHTML = '';
   $('queue-panel').classList.add('open');
   $('queue-backdrop').classList.add('open');
-  ['queue-btn-main', 'queue-btn-lyrics'].forEach(id => $(id).classList.toggle('active', mode === 'queue'));
+  $$('.queue-btn').forEach(b => b.classList.toggle('active', mode === 'queue'));
   if (mode === 'devices') fetchDevices(); else fetchQueue();
 }
 function closePanel() {
@@ -194,27 +227,75 @@ function closePanel() {
   queueOpen = false;
   $('queue-panel').classList.remove('open');
   $('queue-backdrop').classList.remove('open');
-  ['queue-btn-main', 'queue-btn-lyrics'].forEach(id => $(id).classList.remove('active'));
+  $$('.queue-btn').forEach(b => b.classList.remove('active'));
 }
 function toggleQueue() { if (panelMode === 'queue') closePanel(); else openPanel('queue'); }
 function openDevices() { if (isConnected()) openPanel('devices'); }
 
+function panelMessage(text) {
+  const m = document.createElement('div');
+  m.className = 'q-msg';
+  m.textContent = text;
+  $('queue-list').innerHTML = '';
+  $('queue-list').appendChild(m);
+}
+
+async function fetchQueue() {
+  if (!isConnected()) return panelMessage('Connect Spotify to see your queue.');
+  if (!$('queue-list').children.length) panelMessage('Loading…');
+  const r = await sp('/me/player/queue');
+  if (r.ok && r.data) renderQueue(r.data);
+  else panelMessage('Couldn’t load the queue.');
+}
+
+function queueRow(item, isCurrent) {
+  const info = itemInfo(item);
+  const div = document.createElement('div');
+  div.className = 'queue-item';
+  const artBox = document.createElement('div');
+  artBox.className = 'queue-item-art';
+  if (info.artSmall) { const img = document.createElement('img'); img.src = info.artSmall; artBox.appendChild(img); }
+  const txt = document.createElement('div');
+  txt.className = 'queue-item-info';
+  const t = document.createElement('div');
+  t.className = 'queue-item-title' + (isCurrent ? ' queue-now' : '');
+  t.textContent = info.name;
+  const a = document.createElement('div');
+  a.className = 'queue-item-artist';
+  a.textContent = info.artist;
+  txt.append(t, a);
+  div.append(artBox, txt);
+  return div;
+}
+
+function renderQueue(data) {
+  const list = $('queue-list');
+  list.innerHTML = '';
+  const head = text => { const h = document.createElement('div'); h.className = 'q-head'; h.textContent = text; list.appendChild(h); };
+  if (data.currently_playing) { head('Now playing'); list.appendChild(queueRow(data.currently_playing, true)); }
+  if (data.queue?.length) { head('Next up'); data.queue.slice(0, 20).forEach(t => list.appendChild(queueRow(t, false))); }
+  if (!data.currently_playing && !data.queue?.length) panelMessage('Queue is empty.');
+}
+
+const DEVICE_ICON = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>';
 async function fetchDevices() {
-  queueMessage('Looking for devices…');
+  panelMessage('Looking for devices…');
   const r = await sp('/me/player/devices');
   const devices = r.data?.devices || [];
-  if (!r.ok || !devices.length) return queueMessage('No Spotify devices found. Open Spotify on a device first.');
+  if (!r.ok || !devices.length) return panelMessage('No devices found. Open Spotify on a device first.');
   const list = $('queue-list');
   list.innerHTML = '';
   devices.forEach(d => {
     const row = document.createElement('div');
     row.className = 'device-row' + (d.is_active ? ' current' : '');
+    row.innerHTML = DEVICE_ICON;
+    const box = document.createElement('div');
     const name = document.createElement('div');
+    name.className = 'dev-name';
     name.textContent = d.name;
     const type = document.createElement('div');
     type.className = 'dev-type';
-    type.textContent = (d.type || '').toLowerCase() + (d.is_active ? ' · playing here' : '');
-    const box = document.createElement('div');
+    type.textContent = d.is_active ? 'Listening on this device' : (d.type || '').toLowerCase();
     box.append(name, type);
     row.appendChild(box);
     row.onclick = async () => {
@@ -226,113 +307,44 @@ async function fetchDevices() {
   });
 }
 
-// "Up next" line under the progress bar — one queue call per track change.
+// "Next in queue" card under the album art — one queue call per track change.
 async function updateUpNext() {
-  const el = $('up-next');
   const r = await sp('/me/player/queue');
   const next = r.ok ? r.data?.queue?.[0] : null;
-  el.innerHTML = '';
-  if (!next) return;
+  const card = $('next-card');
+  if (!next) { card.classList.add('empty'); return; }
   const info = itemInfo(next);
-  const b = document.createElement('b');
-  b.textContent = info.name;
-  el.append('Up next  ', b, info.artist ? '  ·  ' + info.artist : '');
+  const title = $('up-next');
+  title.textContent = info.name;
+  if (info.artist) { const s = document.createElement('span'); s.textContent = ' · ' + info.artist; title.appendChild(s); }
+  const art = $('next-art');
+  art.innerHTML = '';
+  if (info.artSmall) { const img = document.createElement('img'); img.src = info.artSmall; art.appendChild(img); }
+  card.classList.remove('empty');
 }
 
-function queueMessage(text, withConnect) {
-  const list = $('queue-list');
-  list.innerHTML = '';
-  const m = document.createElement('div');
-  m.style.cssText = 'padding:20px;color:rgba(255,255,255,0.3);font-size:13px;';
-  m.textContent = text;
-  list.appendChild(m);
-  if (withConnect) {
-    const b = document.createElement('button');
-    b.className = 'lyrics-btn';
-    b.style.margin = '0 20px';
-    b.textContent = 'Connect Spotify';
-    b.onclick = startSpotifyOAuth;
-    list.appendChild(b);
-  }
-}
-
-async function fetchQueue() {
-  if (!isConnected()) return queueMessage('Connect Spotify to see your queue.', true);
-  if (!$('queue-list').children.length) queueMessage('Loading…');
-  const r = await sp('/me/player/queue');
-  if (r.ok && r.data) renderQueue(r.data);
-  else queueMessage('Couldn’t load the queue.');
-}
-
-function renderQueue(data) {
-  const list = $('queue-list');
-  list.innerHTML = '';
-  const addHeader = text => {
-    const h = document.createElement('div');
-    h.style.cssText = 'padding:10px 28px 4px;font-size:11px;font-weight:600;color:rgba(255,255,255,0.35);letter-spacing:0.8px;text-transform:uppercase;';
-    h.textContent = text;
-    list.appendChild(h);
-  };
-  const addTrack = (item, isCurrent) => {
-    const info = itemInfo(item);
-    const div = document.createElement('div');
-    div.className = 'queue-item';
-    const artBox = document.createElement('div');
-    artBox.className = 'queue-item-art';
-    if (info.art) { const img = document.createElement('img'); img.src = info.art; img.loading = 'lazy'; artBox.appendChild(img); }
-    const txt = document.createElement('div');
-    txt.className = 'queue-item-info';
-    const t = document.createElement('div');
-    t.className = 'queue-item-title' + (isCurrent ? ' queue-now' : '');
-    t.textContent = info.name;
-    const a = document.createElement('div');
-    a.className = 'queue-item-artist';
-    a.textContent = info.artist;
-    txt.append(t, a);
-    div.append(artBox, txt);
-    list.appendChild(div);
-  };
-  if (data.currently_playing) { addHeader('Now Playing'); addTrack(data.currently_playing, true); }
-  if (data.queue?.length) { addHeader('Next Up'); data.queue.slice(0, 15).forEach(t => addTrack(t, false)); }
-  if (!data.currently_playing && !data.queue?.length) queueMessage('Queue is empty.');
-}
-
-// Normalises tracks and podcast episodes into one shape.
-function itemInfo(item) {
-  if (!item) return { name: '', artist: '', album: '', art: '' };
-  if (item.type === 'episode') {
-    return {
-      name: item.name || '',
-      artist: item.show?.publisher || item.show?.name || '',
-      album: item.show?.name || '',
-      art: item.images?.[0]?.url || item.show?.images?.[0]?.url || ''
-    };
-  }
-  return {
-    name: item.name || '',
-    artist: item.artists?.map(a => a.name).join(', ') || '',
-    firstArtist: item.artists?.[0]?.name || '',
-    album: item.album?.name || '',
-    art: item.album?.images?.[0]?.url || ''
-  };
-}
-
-// ── Clock ──────────────────────────────────────────────────
+// ── Clock (ticks exactly on the second) ────────────────────
 const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 function updateClock() {
   const now = new Date();
   let h = now.getHours();
-  const m = now.getMinutes().toString().padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
-  const t = h + ':' + m + ' ' + ampm;
   const date = DAYS[now.getDay()] + ', ' + MONTHS[now.getMonth()] + ' ' + now.getDate();
-  $('time').textContent = t;
-  $('lyr-time').textContent = t;
+  $('time-hm').textContent = h + ':' + m;
+  $('time-s').textContent = s;
+  $('time-ampm').textContent = ampm;
   $('date').textContent = date;
-  $('idle-time').textContent = h + ':' + m;
+  $('lyr-time').innerHTML = h + ':' + m + '<span>:' + s + ' ' + ampm + '</span>';
+  $('idle-time').innerHTML = '<span class="i-hm">' + h + ':' + m + '</span><span class="i-side"><span class="i-s">' + s + '</span><span class="i-ampm">' + ampm + '</span></span>';
   $('idle-date').textContent = date;
+}
+function clockTick() {
+  updateClock();
+  setTimeout(clockTick, 1000 - (Date.now() % 1000) + 15);
 }
 
 // ── Weather (Open-Meteo, no key) ───────────────────────────
@@ -367,74 +379,139 @@ function getCoords() {
 
 async function updateWeather() {
   const c = await getCoords();
-  if (!c) { $('w-icon').textContent = ''; $('w-temp').textContent = ''; $('w-desc').textContent = ''; return; }
+  if (!c) return;
   try {
     const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}` +
                           `&current=temperature_2m,weather_code&temperature_unit=fahrenheit`);
     const d = await r.json();
     const t = Math.round(d.current.temperature_2m), wmo = d.current.weather_code;
-    $('w-icon').textContent = WMO_CODE[wmo] || '🌡️';
-    $('w-temp').textContent = t + '°F';
+    $('w-icon').textContent = WMO_CODE[wmo] || '';
+    $('w-temp').textContent = t + '°';
     $('w-desc').textContent = WMO_DESC[wmo] || '';
     $('idle-weather').textContent = (WMO_CODE[wmo] || '') + ' ' + t + '°F · ' + (WMO_DESC[wmo] || '');
   } catch (e) {}
 }
 
-// ── UI sync helpers ────────────────────────────────────────
-function applyPlayUI() {
-  const path = isPlaying ? '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
-  ['play-icon', 'play-icon-lyrics'].forEach(id => { $(id).innerHTML = path; });
+// ── Album colour (Spotify-style background) ────────────────
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h /= 6;
+  }
+  return [h, s, l];
 }
-function applyShuffleUI() { ['shuffle-btn-main', 'shuffle-btn-lyrics'].forEach(id => $(id).classList.toggle('shuffle-on', isShuffle)); }
-function applyLoopUI()    { ['loop-btn-main', 'loop-btn-lyrics'].forEach(id => $(id).classList.toggle('loop-on', isLoop)); }
+function hslToRgb(h, s, l) {
+  if (!s) { const v = Math.round(l * 255); return [v, v, v]; }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const f = t => { t = (t + 1) % 1; return t < 1/6 ? p + (q - p) * 6 * t : t < 1/2 ? q : t < 2/3 ? p + (q - p) * (2/3 - t) * 6 : p; };
+  return [f(h + 1/3), f(h), f(h - 1/3)].map(v => Math.round(v * 255));
+}
+function albumColour(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = c.height = 24;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const d = ctx.getImageData(0, 0, 24, 24).data;
+        let r = 0, g = 0, b = 0, w = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const [, s, l] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
+          // favour vivid mid-tones over near-black/near-white pixels
+          const wt = 0.06 + s * s * Math.max(0, 1 - Math.abs(l - 0.5) * 1.6);
+          r += d[i] * wt; g += d[i + 1] * wt; b += d[i + 2] * wt; w += wt;
+        }
+        resolve(rgbToHsl(r / w, g / w, b / w));
+      } catch (e) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+async function applyAlbumColour(url, trackId) {
+  const hsl = url ? await albumColour(url) : null;
+  if (trackId !== currentTrackId) return;
+  let [h, s, l] = hsl || [0, 0, 0.3];
+  if (s > 0.12) s = Math.min(Math.max(s, 0.45), 0.8);
+  const main = hslToRgb(h, s, Math.min(Math.max(l, 0.3), 0.42));
+  const ly   = hslToRgb(h, s, Math.min(Math.max(l, 0.36), 0.44));
+  $('stage').style.setProperty('--accent', main.join(', '));
+  $('stage').style.setProperty('--ly', ly.join(', '));
+}
 
-const HEART_OUTLINE = `<path d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/>`;
-const HEART_FILLED  = `<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>`;
+// ── UI sync helpers ────────────────────────────────────────
+function applyPlayUI() { $$('.play-icon').forEach(el => { el.innerHTML = isPlaying ? ICON_PAUSE : ICON_PLAY; }); }
+function applyShuffleUI() { $$('.shuffle-btn').forEach(el => el.classList.toggle('on', isShuffle)); }
+function applyLoopUI() {
+  $$('.loop-btn').forEach(el => {
+    el.classList.toggle('on', repeatState !== 'off');
+    el.classList.toggle('loop-one', repeatState === 'track');
+  });
+}
 function applyLikeUI() {
-  const show = currentItemType === 'track';
-  [['like-btn-main', 'like-icon'], ['like-btn-lyrics', 'like-icon-lyrics']].forEach(([btn, ico]) => {
-    $(btn).classList.toggle('liked', isLiked);
-    $(btn).style.visibility = show ? 'visible' : 'hidden';
-    $(ico).innerHTML = isLiked ? HEART_FILLED : HEART_OUTLINE;
+  const show = currentItemType === 'track' && !!currentTrackId;
+  ['like-btn-main', 'like-btn-lyrics'].forEach(id => {
+    const b = $(id);
+    b.style.visibility = show ? 'visible' : 'hidden';
+    const size = id === 'like-btn-main' ? 30 : 22;
+    b.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24">${isLiked ? ICON_ADDED : ICON_ADD}</svg>`;
   });
 }
 
 function setArt(url) {
   ['art-wrap', 'art-wrap-lyrics'].forEach(id => {
     const img = document.createElement('img');
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;opacity:0;';
+    img.style.opacity = '0';
     img.onload = () => { img.style.opacity = '1'; };
     img.src = url;
     $(id).innerHTML = '';
     $(id).appendChild(img);
   });
-  $('bg').style.backgroundImage = `url('${url}')`;
 }
 
 function setTrackText(info) {
-  $('track-name').textContent = info.name;
+  const name = $('track-name');
+  name.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = info.name;
+  name.appendChild(span);
+  // Spotify-style marquee for titles that don't fit
+  requestAnimationFrame(() => {
+    const over = span.scrollWidth - name.clientWidth;
+    if (over > 4) {
+      name.style.setProperty('--dist', -(over + 12) + 'px');
+      name.style.setProperty('--dur', Math.max(10, over / 18) + 's');
+      span.classList.add('scroll');
+    }
+  });
+  $('track-meta').textContent = info.artist + (info.album && info.album !== info.name ? ' · ' + info.album : '');
   $('lyr-track-name').textContent = info.name;
-  $('lyr-meta-row').textContent = [info.artist, info.album].filter(Boolean).join(' • ');
-  const meta = $('track-meta');
-  meta.innerHTML = '';
-  const span = (cls, text) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; meta.appendChild(s); };
-  if (info.artist) span('track-artist', info.artist);
-  if (info.artist && info.album) span('meta-dot', '•');
-  if (info.album) span('track-album', info.album);
+  $('lyr-meta-row').textContent = info.artist;
 }
 
 function showNothingPlaying() {
-  $('track-name').innerHTML = '<span class="not-playing">' + (isConnected() ? 'Nothing playing' : 'Spotify not connected') + '</span>';
+  $('track-name').innerHTML = '<span class="not-playing">' + (isConnected() ? 'Nothing playing' : 'Connect Spotify to get started') + '</span>';
+  $('track-meta').textContent = isConnected() ? 'Play something on Spotify' : '';
   $('lyr-track-name').textContent = 'Nothing playing';
   $('lyr-meta-row').textContent = '';
-  $('track-meta').innerHTML = '';
-  $('up-next').innerHTML = '';
+  $('next-card').classList.add('empty');
   setDeviceLabel('');
   lyricsLines = [];
   lastTrack = '';
+  currentTrackId = null;
   isPlaying = false;
   applyPlayUI();
-  stopProgressInterval();
+  applyLikeUI();
+  setBase(0);
+  duration = 0;
 }
 
 // ── Controls ───────────────────────────────────────────────
@@ -443,43 +520,43 @@ function pollSoon(...delays) { delays.forEach(d => setTimeout(updateFromSpotify,
 
 async function togglePlay() {
   wakeFromIdle();
-  isPlaying = !isPlaying; applyPlayUI(); lockControls();
-  if (!isPlaying) stopProgressInterval(); else if (duration) startProgressInterval(position);
+  const p = currentPos();
+  isPlaying = !isPlaying; setBase(p); applyPlayUI(); lockControls();
   let r = await sp(`/me/player/${isPlaying ? 'play' : 'pause'}`, 'PUT');
-  // No active device (e.g. Spotify went idle) → wake the last device we saw.
+  // No active device (Spotify went idle) → wake the last device we saw.
   if (!r.ok && r.status === 404 && isPlaying) {
     const dev = localStorage.getItem('sp_last_device');
     if (dev) r = await sp('/me/player', 'PUT', { device_ids: [dev], play: true });
   }
-  if (!r.ok) { controlLockUntil = 0; }
+  if (!r.ok) controlLockUntil = 0;
   pollSoon(400, 1200);
 }
 async function nextTrack() {
-  stopProgressInterval();
   await sp('/me/player/next', 'POST');
-  pollSoon(300, 800, 1500);
+  pollSoon(250, 700, 1500);
 }
 async function prevTrack() {
-  stopProgressInterval();
+  // Like Spotify: more than 3s in → restart the song, otherwise go to the previous one.
+  if (currentPos() > 3) return seekTo(0);
   await sp('/me/player/previous', 'POST');
-  pollSoon(300, 800, 1500);
+  pollSoon(250, 700, 1500);
 }
 async function toggleShuffle() {
   isShuffle = !isShuffle; applyShuffleUI(); lockControls();
   await sp(`/me/player/shuffle?state=${isShuffle}`, 'PUT');
   setTimeout(updateUpNext, 800);
 }
-async function seekTo(sec) {
-  position = Math.max(0, Math.min(sec, duration));
-  currentLyricIdx = -1;
-  setProgress(position, duration);
-  if (isPlaying) startProgressInterval(position);
-  syncLyrics(position);
-  await sp(`/me/player/seek?position_ms=${Math.floor(position * 1000)}`, 'PUT');
-}
 async function toggleLoop() {
-  isLoop = !isLoop; applyLoopUI(); lockControls();
-  await sp(`/me/player/repeat?state=${isLoop ? 'context' : 'off'}`, 'PUT');
+  repeatState = { off: 'context', context: 'track', track: 'off' }[repeatState] || 'off';
+  applyLoopUI(); lockControls();
+  await sp(`/me/player/repeat?state=${repeatState}`, 'PUT');
+}
+async function seekTo(sec) {
+  setBase(Math.max(0, Math.min(sec, duration)));
+  currentLyricIdx = -2;
+  renderProgress(position, duration);
+  if (onLyricsPage) syncLyrics(position, true);
+  await sp(`/me/player/seek?position_ms=${Math.floor(position * 1000)}`, 'PUT');
 }
 
 // Liked Songs — Spotify replaced /me/tracks with /me/library in Feb 2026.
@@ -503,56 +580,48 @@ async function toggleLike() {
   if (!r.ok) { isLiked = !isLiked; applyLikeUI(); likeLockUntil = 0; }
 }
 
-// ── Volume popups ──────────────────────────────────────────
-let volMainOpen = false, volLyricsOpen = false, volCloseTimer = null;
+// ── Volume sheet ───────────────────────────────────────────
+let volOpen = false, volCloseTimer = null;
+function toggleVol() {
+  volOpen = !volOpen;
+  $('vol-sheet').classList.toggle('open', volOpen);
+  $$('.vol-btn').forEach(b => b.classList.toggle('active', volOpen));
+  if (volOpen) armVolAutoClose();
+}
 function armVolAutoClose() {
   clearTimeout(volCloseTimer);
   volCloseTimer = setTimeout(() => {
     if (volDragging) return armVolAutoClose();
-    if (volMainOpen) toggleVolMain();
-    if (volLyricsOpen) toggleVolLyrics();
-  }, 6000);
-}
-function toggleVolMain() {
-  volMainOpen = !volMainOpen;
-  $('vol-popup').classList.toggle('open', volMainOpen);
-  $('vol-btn-main').classList.toggle('active', volMainOpen);
-  if (volMainOpen) armVolAutoClose();
-}
-function toggleVolLyrics() {
-  volLyricsOpen = !volLyricsOpen;
-  $('vol-popup-lyrics').classList.toggle('open', volLyricsOpen);
-  $('vol-btn-lyrics').classList.toggle('active', volLyricsOpen);
-  if (volLyricsOpen) armVolAutoClose();
+    if (volOpen) toggleVol();
+  }, 4000);
 }
 function updateVolSlider(val) {
-  const pct = Math.max(0, Math.min(100, val)) + '%';
-  ['main', 'lyrics'].forEach(which => {
-    $('vol-fill-' + which).style.width = pct;
-    $('vol-thumb-' + which).style.left = pct;
-    $('vol-thumb-' + which).style.marginLeft = '-7px';
-  });
+  const pct = Math.max(0, Math.min(100, val)) / 100;
+  $('vol-fill').style.transform = 'scaleX(' + pct + ')';
+  $('vol-rail').style.transform = 'translateX(' + (pct * 100) + '%)';
+  $('vol-pct').textContent = Math.round(pct * 100);
 }
 
-let volDragging = false, volWhich = 'main', volTimer = null, volLockUntil = 0;
+let volDragging = false, volTimer = null, volLockUntil = 0;
 function getClientX(e) {
   return e.touches?.length ? e.touches[0].clientX : (e.changedTouches?.length ? e.changedTouches[0].clientX : e.clientX);
 }
-function volScrubStart(e, which) {
+function volScrubStart(e) {
   e.preventDefault();
-  volDragging = true; volWhich = which;
+  volDragging = true;
+  $('vol-track').classList.add('dragging');
   volApply(e);
 }
 function volApply(e) {
-  const rect = $('vol-track-' + volWhich).getBoundingClientRect();
+  const rect = $('vol-track').getBoundingClientRect();
   volume = Math.round(Math.max(0, Math.min(1, (getClientX(e) - rect.left) / rect.width)) * 100);
   updateVolSlider(volume);
   volLockUntil = Date.now() + 2500;
   armVolAutoClose();
   clearTimeout(volTimer);
-  volTimer = setTimeout(() => sp(`/me/player/volume?volume_percent=${volume}`, 'PUT'), 300);
+  volTimer = setTimeout(() => sp(`/me/player/volume?volume_percent=${volume}`, 'PUT'), 250);
 }
-function volScrubEnd() { volDragging = false; }
+function volScrubEnd() { volDragging = false; $('vol-track').classList.remove('dragging'); }
 
 // ── Seek scrubber ──────────────────────────────────────────
 function scrubPct(e) {
@@ -562,27 +631,16 @@ function scrubPct(e) {
 function scrubStart(e, which) {
   e.preventDefault();
   activeScrubber = which; isDragging = true;
-  stopProgressInterval();
-  $('fill-' + which).classList.add('instant');
-  currentLyricIdx = -1;
+  $('scrubber-' + which).classList.add('dragging');
   scrubApply(e);
 }
-function scrubApply(e) {
-  const pct = scrubPct(e);
-  $('fill-'  + activeScrubber).style.width = (pct * 100) + '%';
-  $('thumb-' + activeScrubber).style.left  = (pct * 100) + '%';
-  $('pos-'   + activeScrubber).textContent = fmt(pct * duration);
-}
+function scrubApply(e) { renderProgress(scrubPct(e) * duration, duration); }
 async function scrubEnd(e) {
   if (!isDragging) return;
+  const pct = scrubPct(e);
+  $('scrubber-' + activeScrubber).classList.remove('dragging');
   isDragging = false;
-  $('fill-' + activeScrubber).classList.remove('instant');
-  position = scrubPct(e) * duration;
-  setProgress(position, duration);
-  currentLyricIdx = -1;
-  if (isPlaying && duration > 0) startProgressInterval(position);
-  if (onLyricsPage) syncLyrics(position);
-  await sp(`/me/player/seek?position_ms=${Math.floor(position * 1000)}`, 'PUT');
+  await seekTo(pct * duration);
 }
 
 document.addEventListener('mousemove', e => { if (isDragging) scrubApply(e); if (volDragging) volApply(e); });
@@ -594,7 +652,7 @@ document.addEventListener('touchmove', e => {
 document.addEventListener('touchend',  e => { if (isDragging) scrubEnd(e); if (volDragging) volScrubEnd(e); });
 
 // ── Lyrics (lrclib.net) ────────────────────────────────────
-let lyricsLines = [], currentLyricIdx = -1;
+let lyricsLines = [], currentLyricIdx = -2;
 const lyricsCache = new Map();   // trackId → { synced: [...] } | { plain: [...] } | null
 
 function parseLrc(lrc) {
@@ -631,7 +689,7 @@ async function lookupLyrics(title, artist, album, dur) {
 }
 
 async function fetchLyrics(trackId, title, artist, album, dur) {
-  lyricsLines = []; currentLyricIdx = -1;
+  lyricsLines = []; currentLyricIdx = -2;
   const inner = $('lyrics-inner');
   if (!title) return;
   let res;
@@ -654,15 +712,16 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
       inner.appendChild(el);
     });
     if (userRequestedLyrics && !onLyricsPage) goToLyrics();
-    syncLyrics(position);
+    syncLyrics(position, true);
   } else if (res?.plain?.length) {
     res.plain.forEach(text => {
       const el = document.createElement('div');
       el.className = 'lyric-line plain'; el.textContent = text;
       inner.appendChild(el);
     });
+    inner.scrollTop = 0;
   } else {
-    inner.innerHTML = '<div class="lyrics-status-msg">No lyrics found.</div>';
+    inner.innerHTML = '<div class="lyrics-status-msg">No lyrics for this one.</div>';
     // Bounce back to Now Playing, but remember the user wants lyrics for the next song.
     if (onLyricsPage) setTimeout(() => {
       if (!lyricsLines.length && onLyricsPage) {
@@ -674,44 +733,40 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
   }
 }
 
-function syncLyrics(pos) {
+// Spotify-style: sung lines light, current line white, upcoming lines dark.
+function syncLyrics(pos, force) {
   if (!lyricsLines.length) return;
-  let idx = 0;
+  let idx = -1;
   for (let i = 0; i < lyricsLines.length; i++) {
-    if (lyricsLines[i].time <= pos) idx = i; else break;
+    if (lyricsLines[i].time <= pos + 0.15) idx = i; else break;
   }
-  if (idx === currentLyricIdx) return;
-  const prev = currentLyricIdx;
+  if (idx === currentLyricIdx && !force) return;
   currentLyricIdx = idx;
-  // Only touch lines whose class can have changed (±4 around old and new index).
-  const touch = new Set();
-  [prev, idx].forEach(c => { if (c < 0) return; for (let i = c - 4; i <= c + 4; i++) touch.add(i); });
-  if (prev < 0) lyricsLines.forEach((_, i) => touch.add(i));
-  touch.forEach(i => {
+  for (let i = 0; i < lyricsLines.length; i++) {
     const el = $('lyric-' + i);
-    if (!el) return;
-    el.classList.remove('active', 'near');
-    if (i === idx) el.classList.add('active');
-    else if (Math.abs(i - idx) <= 3) el.classList.add('near');
-  });
-  const inner = $('lyrics-inner'), active = $('lyric-' + idx);
+    if (el) el.className = 'lyric-line' + (i < idx ? ' past' : i === idx ? ' active' : '');
+  }
+  const inner = $('lyrics-inner');
+  const active = $('lyric-' + Math.max(idx, 0));
   if (!inner || !active) return;
-  const target = (active.offsetTop - inner.offsetTop) - inner.clientHeight / 2 + active.offsetHeight / 2;
-  inner.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  const target = active.offsetTop - inner.clientHeight * 0.36;
+  inner.scrollTo({ top: Math.max(0, target), behavior: force ? 'auto' : 'smooth' });
 }
 
-// ── Idle screen (burn-in friendly clock when nothing is playing) ──
+// ── Idle clock (nothing playing for 5 min) ─────────────────
 function updateIdle() {
-  if (isPlaying || queueOpen || isDragging) { idleSince = Date.now(); }
+  if (isPlaying || queueOpen || isDragging) idleSince = Date.now();
   const shouldShow = Date.now() - idleSince > IDLE_AFTER_MS;
   if (shouldShow !== idleShown) {
     idleShown = shouldShow;
     $('idle').classList.toggle('show', shouldShow);
+    document.body.classList.toggle('idle', shouldShow);
+    if (shouldShow) { closePanel(); if (volOpen) toggleVol(); }
   }
   if (idleShown) {
-    // drift the clock a little every minute so nothing sits on the same pixels
+    // drift a little every minute so nothing sits on the same pixels all night
     const n = Math.floor(Date.now() / 60000);
-    $('idle-inner').style.transform = `translate(${(n * 37) % 80 - 40}px, ${(n * 23) % 60 - 30}px)`;
+    $('idle-inner').style.transform = `translate(${(n * 37) % 80 - 40}px, ${(n * 23) % 50 - 25}px)`;
   }
 }
 function wakeFromIdle() {
@@ -735,16 +790,17 @@ async function updateFromSpotify() {
 
     const item = data.item;
     const info = itemInfo(item);
-    const newDuration = (item.duration_ms || 0) / 1000;
     const newPos = (data.progress_ms || 0) / 1000;
 
     if (data.device?.id) localStorage.setItem('sp_last_device', data.device.id);
     setDeviceLabel(data.device?.name || '');
 
+    let playChanged = false;
     if (Date.now() >= controlLockUntil) {
+      playChanged = isPlaying !== !!data.is_playing;
       isPlaying = !!data.is_playing;
       isShuffle = !!data.shuffle_state;
-      isLoop    = data.repeat_state !== 'off';
+      repeatState = data.repeat_state || 'off';
       applyPlayUI(); applyShuffleUI(); applyLoopUI();
     }
     const newVol = data.device?.volume_percent;
@@ -752,18 +808,18 @@ async function updateFromSpotify() {
       volume = newVol; updateVolSlider(volume);
     }
 
+    duration = (item.duration_ms || 0) / 1000;
     const isNewTrack = item.id !== lastTrack;
     if (isNewTrack) {
       lastTrack = item.id;
       currentTrackId = item.id;
       currentItemType = item.type || 'track';
       isLiked = false; likeLockUntil = 0; applyLikeUI();
-      stopProgressInterval();
-      currentLyricIdx = -1;
+      currentLyricIdx = -2;
       checkIfLiked(item.id, true);
       setTrackText(info);
       if (info.art && info.art !== lastArt) { lastArt = info.art; setArt(info.art); }
-      duration = newDuration;
+      applyAlbumColour(info.artSmall || info.art, item.id);
       if (currentItemType === 'track') {
         fetchLyrics(item.id, info.name, info.firstArtist || info.artist, info.album, Math.round(duration));
       } else {
@@ -775,15 +831,8 @@ async function updateFromSpotify() {
       wakeFromIdle();
     }
 
-    duration = newDuration;
-    // Re-sync the ticker only when it has drifted noticeably, so the bar doesn't jitter.
-    const drift = Math.abs(position - newPos);
-    if (!isDragging) {
-      if (!isPlaying) { stopProgressInterval(); position = newPos; }
-      else if (!progressInterval || drift > 1.5) { position = newPos; startProgressInterval(position); }
-    }
-    setProgress(position, duration);
-    if (onLyricsPage && lyricsLines.length) syncLyrics(position);
+    // Only re-anchor the smooth ticker when it drifts, so the bar never jumps backwards.
+    if (!isDragging && (isNewTrack || playChanged || Math.abs(currentPos() - newPos) > 1.2)) setBase(newPos);
     if (!isNewTrack) checkIfLiked(currentTrackId);
   } finally {
     pollInFlight = false;
@@ -799,6 +848,7 @@ function nextPollDelay() {
 }
 async function pollLoop() {
   await updateFromSpotify();
+  updateIdle();                 // music starting again wakes the clock screen right away
   setTimeout(pollLoop, Math.max(nextPollDelay(), rateLimitedUntil - Date.now()));
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateFromSpotify(); });
@@ -814,23 +864,21 @@ async function checkVersion() {
 }
 
 // ── Fit to screen ──────────────────────────────────────────
-// The layout is designed at 960×480 (Echo Show 5). Scale it to fill any Echo:
-// Show 8/10 (1280×800) get a taller canvas instead of a dead band at the bottom.
+// Designed at 960×480 (Echo Show 5); scales to fill any Echo, stretching height to the aspect ratio.
 function fitStage() {
   const W = window.innerWidth, H = window.innerHeight;
   const scale = Math.min(W / 960, H / 480);
   const stage = $('stage');
-  stage.style.width = (W / scale) + 'px';
+  stage.style.width = Math.ceil(W / scale) + 'px';
+  stage.style.height = Math.ceil(H / scale) + 'px';
   stage.style.setProperty('--h', (H / scale) + 'px');
-  stage.style.height = (H / scale) + 'px';
   stage.style.transform = `scale(${scale})`;
 }
 window.addEventListener('resize', fitStage);
 window.addEventListener('orientationchange', () => setTimeout(fitStage, 300));
 
 // ── Touch gestures ─────────────────────────────────────────
-// Swipe on album art: next / previous track. Swipe elsewhere: switch Now Playing ↔ Lyrics.
-// Double-tap album art: like (with a heart pop).
+// Swipe album art: next / previous. Swipe elsewhere: Now Playing ↔ Lyrics. Double-tap art: add to Liked Songs.
 let touch0 = null, lastArtTap = 0;
 function inArt(el) { return el && el.closest && el.closest('#art-wrap, #art-wrap-lyrics'); }
 
@@ -863,23 +911,25 @@ function likeFromArt(artEl) {
   if (currentItemType !== 'track' || !currentTrackId) return;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'heart-pop');
-  svg.innerHTML = HEART_FILLED;
+  svg.setAttribute('class', 'like-pop');
+  svg.innerHTML = ICON_ADDED;
   artEl.appendChild(svg);
   setTimeout(() => svg.remove(), 1000);
-  if (!isLiked) toggleLike();          // double-tap only ever likes, never unlikes
+  if (!isLiked) toggleLike();          // double-tap only ever adds, never removes
 }
 
 // ── Night dimming ──────────────────────────────────────────
-// Between NIGHT_START and NIGHT_END (server config) the screen dims; a tap brightens it for 30s.
+// Between NIGHT_START and NIGHT_END (server config) the whole screen dims; a tap brightens it for 30s.
 let nightWakeUntil = 0;
 function isNight() {
   const s = CFG.night_start, e = CFG.night_end;
   if (s == null || e == null || s === e) return false;
-  const h = new Date().getHours() + new Date().getMinutes() / 60;
+  const now = new Date();
+  const h = now.getHours() + now.getMinutes() / 60;
   return s < e ? (h >= s && h < e) : (h >= s || h < e);
 }
 function updateNight() {
+  document.body.classList.toggle('night', isNight());
   const dim = isNight() && Date.now() > nightWakeUntil;
   $('night').style.opacity = dim ? String(CFG.night_dim ?? 0.6) : '0';
 }
@@ -896,8 +946,17 @@ function sayHello() {
   }).catch(() => {});
 }
 
+// ── Hard refresh (bottom-right button) ─────────────────────
+function hardRefresh() {
+  $('refresh-btn').classList.add('spin');
+  // cache-busting query so the WebView can't serve a stale copy
+  location.replace('/dashboard.html?_=' + Date.now());
+}
+
 // ── Init ───────────────────────────────────────────────────
 fitStage();
+clockTick();
+applyLikeUI();
 (async () => {
   try { CFG = await (await fetch('/api/config', { cache: 'no-store' })).json(); }
   catch (e) { setStatus(false); }
@@ -905,14 +964,13 @@ fitStage();
   showConnectButton();
   sayHello();
 
-  updateClock();
-  updateNight();
-  setInterval(updateNight, 5000);
   updateVolSlider(volume);
   updateWeather();
-  setInterval(updateClock, 1000);
+  updateNight();
+  setInterval(updateNight, 5000);
   setInterval(updateWeather, 15 * 60 * 1000);
   setInterval(updateIdle, 5000);
   setInterval(checkVersion, 5 * 60 * 1000);
+  requestAnimationFrame(frame);
   pollLoop();
 })();

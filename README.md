@@ -31,23 +31,23 @@ A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show 
 ## ✨ Features
 
 - **Real-time playback** — polls Spotify's Web API every 1 second directly. No Home Assistant lag.
-- **Synced lyrics** — fetched from [lrclib.net](https://lrclib.net) (free, no key). Active line auto-highlighted and centered.
+- **Spotify look** — background colour pulled from the album art fading into Spotify black, white round play button, the shuffle/prev/play/next/repeat cluster, green "playing on" device label, and Spotify's colour-block lyrics view.
+- **Big clock with seconds** — the time is the largest thing on screen, with live seconds, date, and weather.
+- **Smooth progress bar** — animated every frame with GPU transforms, so it glides instead of stepping.
+- **Synced lyrics** — fetched from [lrclib.net](https://lrclib.net) (free, no key). Sung lines light up, upcoming lines stay dark, like Spotify.
 - **Smart lyrics page** — stays on lyrics if next song has lyrics too. Auto-returns to Now Playing if none found. Toggle off with the back button.
-- **Liked Songs sync** — heart auto-fills green if the song is in your Liked Songs. Tap to like or unlike. Checks every 10 seconds so changes from other devices reflect automatically.
-- **Queue** — live Next Up list with artwork, pulled directly from Spotify.
-- **Shuffle & Loop** — toggle from the dashboard. Synced with Spotify state.
-- **Volume slider** — custom div-based (not a native `<input type="range">`) so it renders correctly on Fire OS.
-- **Weather** — uses browser geolocation + [Open-Meteo](https://open-meteo.com) (free, no API key). Hides gracefully if location is denied.
-- **Clock & date** — pure JS, no dependencies.
-- **Touch support** — all scrubbers work with touch events for the Echo Show touchscreen.
-- **Responsive queue** — adapts to any screen width.
+- **Liked Songs** — the ⊕ / green ✓ button shows whether the song is in your Liked Songs. Tap to add or remove. Checks every 10 seconds so changes from other devices show up.
+- **Queue** — full queue panel with artwork, plus a "Next in queue" card under the album art.
+- **Shuffle & Repeat** — repeat cycles off → all → one, like Spotify. Previous restarts the song if you're more than 3 seconds in.
+- **Volume** — pop-up volume bar, custom-drawn so it renders correctly on Fire OS.
+- **Weather** — [Open-Meteo](https://open-meteo.com) (free, no API key), using a fixed location from `.env` or browser geolocation.
+- **Hard refresh button** — bottom-right corner, for when the kiosk gets stuck.
 - **Fits any Echo Show** — designed at 960×480 (Show 5) and scales to fill 1280×800 (Show 8/10) or 1920×1080 (Show 15) with no dead bands.
 - **Touch gestures** — swipe the album art to skip/go back, swipe elsewhere to flip between Now Playing and Lyrics, double-tap the art to like.
 - **Tap-to-seek lyrics** — tap any lyric line to jump there. Lyrics are large enough to read across the room and wrap instead of cutting off.
-- **Up next** — the next track is shown under the progress bar.
-- **Device picker** — tap "Now playing on …" to move playback to any Spotify Connect device.
-- **Night mode** — dims the screen overnight (default 10 PM–7 AM, configurable); a tap brightens it for 30 seconds.
-- **Idle clock** — after 5 minutes with nothing playing, fades to a dim, slowly drifting clock (burn-in friendly). Tap to wake.
+- **Device picker** — tap the green device name (or the devices icon) to move playback to any Spotify Connect device.
+- **Night mode** — dims the whole screen overnight (default 11 PM–7 AM, configurable); a tap brightens it for 30 seconds.
+- **Idle clock** — after 5 minutes with nothing playing, the player animates away into a large clock with seconds that drifts slowly (burn-in friendly). Music starting or a tap brings the player back.
 - **Podcasts** — episodes show with show name and artwork.
 - **Wakes Spotify** — if playback went idle, Play transfers back to the last device instead of failing.
 - **Rate-limit aware** — adaptive polling (1s playing, slower when paused/hidden) and honors Spotify's `Retry-After`.
