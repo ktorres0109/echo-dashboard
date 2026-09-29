@@ -273,7 +273,7 @@ button { font-family: inherit; color: inherit; }
 #vol-sheet svg { fill: #fff; flex-shrink: 0; }
 #vol-pct { font-size: 13px; font-weight: 700; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ── Idle clock ── */
+/* ── Idle clock: black screen, dim text (a night-light clock) ── */
 #idle {
   position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; background: #000;
   display: flex; align-items: center; justify-content: center;
@@ -282,19 +282,17 @@ button { font-family: inherit; color: inherit; }
 #idle.show { opacity: 1; pointer-events: auto; }
 body.idle .pages { opacity: 0; transform: scale(0.94); }
 #idle-inner { display: flex; flex-direction: column; align-items: center; transition: transform 8s cubic-bezier(.4,0,.2,1); }
-#idle-time { display: flex; align-items: flex-start; line-height: 0.85; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.92); }
+#idle-time { display: flex; align-items: flex-start; line-height: 0.85; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.32); }
 .i-hm { font-size: calc(var(--h, 480px) * 0.42); font-weight: 800; letter-spacing: -10px; }
 .i-side { display: flex; flex-direction: column; margin: 0.35em 0 0 14px; gap: 8px; font-size: calc(var(--h, 480px) * 0.1); }
-.i-s { font-weight: 700; color: var(--green); line-height: 1; opacity: 0.85; }
-.i-ampm { font-size: 0.34em; font-weight: 700; color: rgba(255,255,255,0.45); letter-spacing: 1px; }
-#idle-date { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.45); margin-top: 18px; }
-#idle-weather { font-size: 20px; font-weight: 500; color: rgba(255,255,255,0.35); margin-top: 8px; }
+.i-s { font-weight: 700; color: var(--green); line-height: 1; opacity: 0.3; }
+.i-ampm { font-size: 0.34em; font-weight: 700; color: rgba(255,255,255,0.2); letter-spacing: 1px; }
+#idle-date { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.2); margin-top: 18px; }
+#idle-weather { font-size: 20px; font-weight: 500; color: rgba(255,255,255,0.16); margin-top: 8px; }
 #idle.show #idle-time    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) both; }
 #idle.show #idle-date    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.15s both; }
 #idle.show #idle-weather { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.3s both; }
 @keyframes clockIn { from { opacity: 0; transform: translateY(24px) scale(0.96); } to { opacity: 1; transform: none; } }
-body.night #idle-time { color: rgba(255,255,255,0.7); }
-body.night .i-s { color: rgba(30,215,96,0.6); }
 
 /* ── Night dimming, status, refresh ── */
 #night { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #000; opacity: 0; pointer-events: none; z-index: 90; transition: opacity 3s ease; }
@@ -305,6 +303,7 @@ body.night .i-s { color: rgba(30,215,96,0.6); }
   background: none; border: none; padding: 10px; border-radius: 50%; cursor: pointer;
   opacity: 0.45; transition: opacity 0.2s;
 }
+body.idle #refresh-btn { opacity: 0.12; }
 #refresh-btn:active { opacity: 0.9; }
 #refresh-btn svg { fill: #fff; display: block; }
 #refresh-btn.spin svg { animation: spin 0.7s linear infinite; }

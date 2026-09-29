@@ -7,7 +7,7 @@ let CFG = { client_id: '', redirect_uri: '', lat: null, lon: null, version: '' }
 const SP_API    = 'https://api.spotify.com/v1';
 // Must stay identical across versions so tokens saved on the Echo keep working.
 const SP_SCOPES = 'user-read-playback-state user-read-currently-playing user-library-read user-library-modify user-modify-playback-state';
-const IDLE_AFTER_MS = 5 * 60 * 1000;
+const IDLE_AFTER_MS = 60 * 60 * 1000;
 
 // ── State ──────────────────────────────────────────────────
 let isPlaying = false, isShuffle = false, isLiked = false, repeatState = 'off';
@@ -769,7 +769,7 @@ function syncLyrics(pos, force) {
   inner.scrollTo({ top: Math.max(0, target), behavior: force ? 'auto' : 'smooth' });
 }
 
-// ── Idle clock (nothing playing for 5 min) ─────────────────
+// ── Idle clock (nothing playing for 60 min) ────────────────
 function updateIdle() {
   if (isPlaying || queueOpen || isDragging) idleSince = Date.now();
   const shouldShow = Date.now() - idleSince > IDLE_AFTER_MS;
@@ -778,6 +778,7 @@ function updateIdle() {
     $('idle').classList.toggle('show', shouldShow);
     document.body.classList.toggle('idle', shouldShow);
     if (shouldShow) { closePanel(); if (volOpen) toggleVol(); }
+    updateNight();
   }
   if (idleShown) {
     // drift a little every minute so nothing sits on the same pixels all night
@@ -947,7 +948,8 @@ function isNight() {
 }
 function updateNight() {
   document.body.classList.toggle('night', isNight());
-  const dim = isNight() && Date.now() > nightWakeUntil;
+  // The idle clock is already dimmed itself; don't stack the night overlay on it.
+  const dim = isNight() && !idleShown && Date.now() > nightWakeUntil;
   $('night').style.opacity = dim ? String(CFG.night_dim != null ? CFG.night_dim : 0.6) : '0';
 }
 document.addEventListener('touchstart', () => {
