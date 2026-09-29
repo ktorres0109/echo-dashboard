@@ -41,6 +41,12 @@ A beautiful, real-time Spotify now-playing dashboard built for Amazon Echo Show 
 - **Clock & date** — pure JS, no dependencies.
 - **Touch support** — all scrubbers work with touch events for the Echo Show touchscreen.
 - **Responsive queue** — adapts to any screen width.
+- **Fits any Echo Show** — designed at 960×480 (Show 5) and scales to fill 1280×800 (Show 8/10) or 1920×1080 (Show 15) with no dead bands.
+- **Touch gestures** — swipe the album art to skip/go back, swipe elsewhere to flip between Now Playing and Lyrics, double-tap the art to like.
+- **Tap-to-seek lyrics** — tap any lyric line to jump there. Lyrics are large enough to read across the room and wrap instead of cutting off.
+- **Up next** — the next track is shown under the progress bar.
+- **Device picker** — tap "Now playing on …" to move playback to any Spotify Connect device.
+- **Night mode** — dims the screen overnight (default 10 PM–7 AM, configurable); a tap brightens it for 30 seconds.
 - **Idle clock** — after 5 minutes with nothing playing, fades to a dim, slowly drifting clock (burn-in friendly). Tap to wake.
 - **Podcasts** — episodes show with show name and artwork.
 - **Wakes Spotify** — if playback went idle, Play transfers back to the last device instead of failing.

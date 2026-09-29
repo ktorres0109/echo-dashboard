@@ -26,6 +26,10 @@ REDIRECT_URI = os.environ.get(
 )
 WEATHER_LAT = os.environ.get("WEATHER_LAT") or None
 WEATHER_LON = os.environ.get("WEATHER_LON") or None
+# Night dimming window in local hours (e.g. 22 → 7). Set NIGHT_START empty to disable.
+NIGHT_START = os.environ.get("NIGHT_START", "22")
+NIGHT_END = os.environ.get("NIGHT_END", "7")
+NIGHT_DIM = os.environ.get("NIGHT_DIM", "0.6")
 
 # Paths the kiosk or Spotify's redirect may hit → file in public/
 ROUTES = {
@@ -78,6 +82,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def client_ip(self):
+        return self.headers.get("CF-Connecting-IP") or self.address_string()
+
     def do_HEAD(self):
         self.do_GET()
 
@@ -89,7 +96,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             body = {"client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI, "version": version(),
                     "lat": float(WEATHER_LAT) if WEATHER_LAT else None,
-                    "lon": float(WEATHER_LON) if WEATHER_LON else None}
+                    "lon": float(WEATHER_LON) if WEATHER_LON else None,
+                    "night_start": float(NIGHT_START) if NIGHT_START else None,
+                    "night_end": float(NIGHT_END) if NIGHT_END else None,
+                    "night_dim": float(NIGHT_DIM or 0.6)}
             return self.send(200, json.dumps(body).encode())
         if path == "/healthz":
             return self.send(200, b"ok", "text/plain")
@@ -102,6 +112,12 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return self.send(400, b'{"error":"bad json"}')
+        if path == "/api/hello":
+            # Each dashboard reports its screen once per load, so we can see what the Echo really is.
+            info = {k: data.get(k) for k in ("w", "h", "dpr", "connected")}
+            ua = str(data.get("ua", ""))[:200]
+            sys.stderr.write(f"device {self.client_ip()} {info} ua={ua}\n")
+            return self.send(204, b"")
         if path == "/api/spotify/token" and isinstance(data.get("code"), str):
             status, body = spotify_token({"grant_type": "authorization_code",
                                           "code": data["code"], "redirect_uri": REDIRECT_URI})
@@ -116,7 +132,7 @@ class Handler(BaseHTTPRequestHandler):
         # Keep logs quiet: only errors and API calls, never query strings (OAuth codes).
         path = urllib.parse.urlsplit(self.path).path
         if path.startswith("/api/spotify") or (args and str(args[1])[:1] in "45"):
-            sys.stderr.write(f"{self.address_string()} {self.command} {path} {args[1] if len(args) > 1 else ''}\n")
+            sys.stderr.write(f"{self.client_ip()} {self.command} {path} {args[1] if len(args) > 1 else ''}\n")
 
 
 if __name__ == "__main__":

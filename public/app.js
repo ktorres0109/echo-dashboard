@@ -177,13 +177,66 @@ async function sp(path, method = 'GET', body = null, retried = false) {
   return { ok: r.ok, status: r.status, data };
 }
 
-// ── Queue panel ────────────────────────────────────────────
-function toggleQueue() {
-  queueOpen = !queueOpen;
-  $('queue-panel').classList.toggle('open', queueOpen);
-  $('queue-backdrop').classList.toggle('open', queueOpen);
-  ['queue-btn-main', 'queue-btn-lyrics'].forEach(id => $(id).classList.toggle('active', queueOpen));
-  if (queueOpen) fetchQueue();
+// ── Side panel (queue or device picker) ────────────────────
+let panelMode = null;
+function openPanel(mode) {
+  panelMode = mode;
+  queueOpen = true;
+  $('panel-title').textContent = mode === 'devices' ? 'Play on…' : 'Next Up';
+  $('queue-list').innerHTML = '';
+  $('queue-panel').classList.add('open');
+  $('queue-backdrop').classList.add('open');
+  ['queue-btn-main', 'queue-btn-lyrics'].forEach(id => $(id).classList.toggle('active', mode === 'queue'));
+  if (mode === 'devices') fetchDevices(); else fetchQueue();
+}
+function closePanel() {
+  panelMode = null;
+  queueOpen = false;
+  $('queue-panel').classList.remove('open');
+  $('queue-backdrop').classList.remove('open');
+  ['queue-btn-main', 'queue-btn-lyrics'].forEach(id => $(id).classList.remove('active'));
+}
+function toggleQueue() { if (panelMode === 'queue') closePanel(); else openPanel('queue'); }
+function openDevices() { if (isConnected()) openPanel('devices'); }
+
+async function fetchDevices() {
+  queueMessage('Looking for devices…');
+  const r = await sp('/me/player/devices');
+  const devices = r.data?.devices || [];
+  if (!r.ok || !devices.length) return queueMessage('No Spotify devices found. Open Spotify on a device first.');
+  const list = $('queue-list');
+  list.innerHTML = '';
+  devices.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'device-row' + (d.is_active ? ' current' : '');
+    const name = document.createElement('div');
+    name.textContent = d.name;
+    const type = document.createElement('div');
+    type.className = 'dev-type';
+    type.textContent = (d.type || '').toLowerCase() + (d.is_active ? ' · playing here' : '');
+    const box = document.createElement('div');
+    box.append(name, type);
+    row.appendChild(box);
+    row.onclick = async () => {
+      closePanel();
+      await sp('/me/player', 'PUT', { device_ids: [d.id], play: true });
+      pollSoon(500, 1500, 3000);
+    };
+    list.appendChild(row);
+  });
+}
+
+// "Up next" line under the progress bar — one queue call per track change.
+async function updateUpNext() {
+  const el = $('up-next');
+  const r = await sp('/me/player/queue');
+  const next = r.ok ? r.data?.queue?.[0] : null;
+  el.innerHTML = '';
+  if (!next) return;
+  const info = itemInfo(next);
+  const b = document.createElement('b');
+  b.textContent = info.name;
+  el.append('Up next  ', b, info.artist ? '  ·  ' + info.artist : '');
 }
 
 function queueMessage(text, withConnect) {
@@ -349,9 +402,11 @@ function applyLikeUI() {
 function setArt(url) {
   ['art-wrap', 'art-wrap-lyrics'].forEach(id => {
     const img = document.createElement('img');
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;opacity:0;';
+    img.onload = () => { img.style.opacity = '1'; };
     img.src = url;
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
-    $(id).replaceChildren(img);
+    $(id).innerHTML = '';
+    $(id).appendChild(img);
   });
   $('bg').style.backgroundImage = `url('${url}')`;
 }
@@ -373,6 +428,7 @@ function showNothingPlaying() {
   $('lyr-track-name').textContent = 'Nothing playing';
   $('lyr-meta-row').textContent = '';
   $('track-meta').innerHTML = '';
+  $('up-next').innerHTML = '';
   setDeviceLabel('');
   lyricsLines = [];
   lastTrack = '';
@@ -411,6 +467,15 @@ async function prevTrack() {
 async function toggleShuffle() {
   isShuffle = !isShuffle; applyShuffleUI(); lockControls();
   await sp(`/me/player/shuffle?state=${isShuffle}`, 'PUT');
+  setTimeout(updateUpNext, 800);
+}
+async function seekTo(sec) {
+  position = Math.max(0, Math.min(sec, duration));
+  currentLyricIdx = -1;
+  setProgress(position, duration);
+  if (isPlaying) startProgressInterval(position);
+  syncLyrics(position);
+  await sp(`/me/player/seek?position_ms=${Math.floor(position * 1000)}`, 'PUT');
 }
 async function toggleLoop() {
   isLoop = !isLoop; applyLoopUI(); lockControls();
@@ -585,6 +650,7 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
     lyricsLines.forEach((line, i) => {
       const el = document.createElement('div');
       el.className = 'lyric-line'; el.id = 'lyric-' + i; el.textContent = line.text;
+      el.onclick = () => seekTo(line.time);   // tap a line to jump there
       inner.appendChild(el);
     });
     if (userRequestedLyrics && !onLyricsPage) goToLyrics();
@@ -592,7 +658,7 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
   } else if (res?.plain?.length) {
     res.plain.forEach(text => {
       const el = document.createElement('div');
-      el.className = 'lyric-line near'; el.textContent = text;
+      el.className = 'lyric-line plain'; el.textContent = text;
       inner.appendChild(el);
     });
   } else {
@@ -704,7 +770,8 @@ async function updateFromSpotify() {
         lyricsLines = [];
         $('lyrics-inner').innerHTML = '<div class="lyrics-status-msg">No lyrics for podcasts.</div>';
       }
-      if (queueOpen) fetchQueue();
+      if (panelMode === 'queue') fetchQueue();
+      updateUpNext();
       wakeFromIdle();
     }
 
@@ -746,14 +813,101 @@ async function checkVersion() {
   } catch (e) {}
 }
 
+// ── Fit to screen ──────────────────────────────────────────
+// The layout is designed at 960×480 (Echo Show 5). Scale it to fill any Echo:
+// Show 8/10 (1280×800) get a taller canvas instead of a dead band at the bottom.
+function fitStage() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const scale = Math.min(W / 960, H / 480);
+  const stage = $('stage');
+  stage.style.width = (W / scale) + 'px';
+  stage.style.setProperty('--h', (H / scale) + 'px');
+  stage.style.height = (H / scale) + 'px';
+  stage.style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', fitStage);
+window.addEventListener('orientationchange', () => setTimeout(fitStage, 300));
+
+// ── Touch gestures ─────────────────────────────────────────
+// Swipe on album art: next / previous track. Swipe elsewhere: switch Now Playing ↔ Lyrics.
+// Double-tap album art: like (with a heart pop).
+let touch0 = null, lastArtTap = 0;
+function inArt(el) { return el && el.closest && el.closest('#art-wrap, #art-wrap-lyrics'); }
+
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  touch0 = (e.touches.length === 1) ? { x: t.clientX, y: t.clientY, time: Date.now(), target: e.target } : null;
+}, { passive: true });
+
+document.addEventListener('touchend', e => {
+  if (!touch0 || isDragging || volDragging || queueOpen || idleShown) { touch0 = null; return; }
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touch0.x, dy = t.clientY - touch0.y;
+  const art = inArt(touch0.target);
+  const quick = Date.now() - touch0.time < 600;
+  touch0 = null;
+  if (quick && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    if (art) { dx < 0 ? nextTrack() : prevTrack(); }
+    else if (dx < 0 && !onLyricsPage) goToLyrics();
+    else if (dx > 0 && onLyricsPage) goToMain();
+    return;
+  }
+  if (art && Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+    if (Date.now() - lastArtTap < 350) { lastArtTap = 0; likeFromArt(art); }
+    else lastArtTap = Date.now();
+  }
+});
+document.addEventListener('dblclick', e => { const art = inArt(e.target); if (art) likeFromArt(art); });
+
+function likeFromArt(artEl) {
+  if (currentItemType !== 'track' || !currentTrackId) return;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'heart-pop');
+  svg.innerHTML = HEART_FILLED;
+  artEl.appendChild(svg);
+  setTimeout(() => svg.remove(), 1000);
+  if (!isLiked) toggleLike();          // double-tap only ever likes, never unlikes
+}
+
+// ── Night dimming ──────────────────────────────────────────
+// Between NIGHT_START and NIGHT_END (server config) the screen dims; a tap brightens it for 30s.
+let nightWakeUntil = 0;
+function isNight() {
+  const s = CFG.night_start, e = CFG.night_end;
+  if (s == null || e == null || s === e) return false;
+  const h = new Date().getHours() + new Date().getMinutes() / 60;
+  return s < e ? (h >= s && h < e) : (h >= s || h < e);
+}
+function updateNight() {
+  const dim = isNight() && Date.now() > nightWakeUntil;
+  $('night').style.opacity = dim ? String(CFG.night_dim ?? 0.6) : '0';
+}
+document.addEventListener('touchstart', () => {
+  if (isNight()) { nightWakeUntil = Date.now() + 30000; updateNight(); }
+}, { passive: true, capture: true });
+
+// Tell the server what screen we're on (shows up in `docker logs echo-dashboard`).
+function sayHello() {
+  fetch('/api/hello', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
+                           ua: navigator.userAgent, connected: isConnected() })
+  }).catch(() => {});
+}
+
 // ── Init ───────────────────────────────────────────────────
+fitStage();
 (async () => {
   try { CFG = await (await fetch('/api/config', { cache: 'no-store' })).json(); }
   catch (e) { setStatus(false); }
   await handleOAuthCallback();
   showConnectButton();
+  sayHello();
 
   updateClock();
+  updateNight();
+  setInterval(updateNight, 5000);
   updateVolSlider(volume);
   updateWeather();
   setInterval(updateClock, 1000);
