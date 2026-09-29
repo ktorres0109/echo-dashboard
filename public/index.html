@@ -36,19 +36,19 @@ button { font-family: inherit; color: inherit; }
 
 /* ── Background: album colour fading into Spotify black (no blur = cheap on the Echo GPU) ── */
 #bg {
-  position: absolute; inset: 0; z-index: 0;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 0;
   background-color: rgb(var(--accent));
   transition: background-color 1.2s ease;
 }
 #bg::after {
-  content: ''; position: absolute; inset: 0;
+  content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0;
   background: linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(18,18,18,0.55) 45%, rgba(18,18,18,0.92) 80%, #121212 100%);
 }
 
 /* ── Pages ── */
-.pages { position: absolute; inset: 0; z-index: 2; transition: opacity 1.1s ease, transform 1.4s cubic-bezier(.2,.8,.2,1); }
+.pages { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 2; transition: opacity 1.1s ease, transform 1.4s cubic-bezier(.2,.8,.2,1); }
 .page {
-  position: absolute; inset: 0; display: flex;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: flex;
   opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
 }
 .page.active { opacity: 1; pointer-events: auto; }
@@ -109,7 +109,7 @@ button { font-family: inherit; color: inherit; }
 .next-title span { color: var(--mute); font-weight: 500; }
 
 .np-right {
-  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;
   padding: 22px 52px 20px 36px;
 }
 
@@ -125,7 +125,7 @@ button { font-family: inherit; color: inherit; }
 .weather { font-size: 16px; font-weight: 500; color: var(--mute); }
 #w-temp { color: #fff; font-weight: 700; margin: 0 4px 0 2px; }
 
-.np-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.np-bottom { margin-top: 28px; display: flex; flex-direction: column; gap: 10px; }
 .track-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .track-text { flex: 1; min-width: 0; }
 .track-name { font-size: 34px; font-weight: 800; letter-spacing: -0.8px; line-height: 1.15; white-space: nowrap; overflow: hidden; }
@@ -141,9 +141,9 @@ button { font-family: inherit; color: inherit; }
 .ptime:first-child { text-align: right; }
 .scrubber { flex: 1; height: 4px; position: relative; cursor: pointer; }
 .scrubber::before { content: ''; position: absolute; left: -6px; right: -6px; top: -18px; bottom: -18px; }
-.scrub-bg { position: absolute; inset: 0; border-radius: 2px; background: rgba(255,255,255,0.3); overflow: hidden; }
-.scrub-fill { position: absolute; inset: 0; background: #fff; transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
-.scrub-rail { position: absolute; inset: 0; pointer-events: none; transform: translateX(0); will-change: transform; }
+.scrub-bg { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 2px; background: rgba(255,255,255,0.3); overflow: hidden; }
+.scrub-fill { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #fff; transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
+.scrub-rail { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; transform: translateX(0); will-change: transform; }
 .scrub-thumb {
   position: absolute; left: 0; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
   border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.5);
@@ -169,6 +169,14 @@ button { font-family: inherit; color: inherit; }
 .device-pill svg { fill: var(--green); flex-shrink: 0; }
 .device-pill:empty { display: none; }
 .bar-icons { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.lyrics-pill {
+  display: flex; align-items: center; gap: 6px; margin-right: 6px; cursor: pointer;
+  background: rgba(255,255,255,0.1); border: none; border-radius: 999px;
+  padding: 7px 14px 7px 11px; font-size: 13px; font-weight: 700; color: var(--sub);
+  transition: transform 0.1s, color 0.15s;
+}
+.lyrics-pill svg { fill: currentColor; display: block; }
+.lyrics-pill:active { transform: scale(0.94); color: #fff; }
 .connect-btn {
   display: none; align-items: center; gap: 8px; border: none; cursor: pointer;
   background: var(--green); color: #000; font-weight: 800; font-size: 14px;
@@ -203,7 +211,7 @@ button { font-family: inherit; color: inherit; }
 .pill-btn:active { transform: scale(0.95); }
 
 .ly-right { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px 44px 12px 16px; }
-.ly-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+.ly-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding-right: 20px; }
 #lyr-time { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; margin-left: auto; }
 #lyr-time span { color: rgba(255,255,255,0.6); }
 .ly-scroll { flex: 1; min-height: 0; overflow: hidden; position: relative;
@@ -223,7 +231,7 @@ button { font-family: inherit; color: inherit; }
 .lyrics-status-msg { font-size: 20px; font-weight: 700; color: rgba(255,255,255,0.7); padding: 8px 0; }
 
 /* ── Queue / device panel ── */
-#queue-backdrop { position: absolute; inset: 0; z-index: 99; background: rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+#queue-backdrop { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 99; background: rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
 #queue-backdrop.open { opacity: 1; pointer-events: auto; }
 #queue-panel {
   position: absolute; top: 0; right: 0; bottom: 0; width: 380px; max-width: 45%;
@@ -267,7 +275,7 @@ button { font-family: inherit; color: inherit; }
 
 /* ── Idle clock ── */
 #idle {
-  position: absolute; inset: 0; z-index: 50; background: #000;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; background: #000;
   display: flex; align-items: center; justify-content: center;
   opacity: 0; pointer-events: none; transition: opacity 1.4s ease;
 }
@@ -289,13 +297,13 @@ body.night #idle-time { color: rgba(255,255,255,0.7); }
 body.night .i-s { color: rgba(30,215,96,0.6); }
 
 /* ── Night dimming, status, refresh ── */
-#night { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 90; transition: opacity 3s ease; }
-#status-dot { position: absolute; top: 10px; right: 12px; z-index: 60; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; opacity: 0; transition: opacity 0.4s; }
+#night { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #000; opacity: 0; pointer-events: none; z-index: 90; transition: opacity 3s ease; }
+#status-dot { position: absolute; top: 22px; right: 52px; z-index: 60; width: 7px; height: 7px; border-radius: 50%; background: #e5484d; opacity: 0; transition: opacity 0.4s; }
 #status-dot.show { opacity: 0.8; }
 #refresh-btn {
-  position: absolute; right: 6px; bottom: 6px; z-index: 70;
+  position: absolute; right: 6px; top: 6px; z-index: 70;
   background: none; border: none; padding: 10px; border-radius: 50%; cursor: pointer;
-  opacity: 0.3; transition: opacity 0.2s;
+  opacity: 0.45; transition: opacity 0.2s;
 }
 #refresh-btn:active { opacity: 0.9; }
 #refresh-btn svg { fill: #fff; display: block; }
@@ -373,7 +381,7 @@ body.night .i-s { color: rgba(30,215,96,0.6); }
             <div class="device-pill" id="device-label" onclick="openDevices()"></div>
             <button class="connect-btn" id="sp-connect-btn" onclick="startSpotifyOAuth()">Connect Spotify</button>
             <div class="bar-icons">
-              <button class="icon-btn" id="lyrics-btn-main" onclick="goToLyrics()" title="Lyrics"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button>
+              <button class="lyrics-pill" id="lyrics-btn-main" onclick="goToLyrics()"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>Lyrics</button>
               <button class="icon-btn queue-btn" onclick="toggleQueue()" title="Queue"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg></button>
               <button class="icon-btn" onclick="openDevices()" title="Devices"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg></button>
               <button class="icon-btn vol-btn" onclick="toggleVol()" title="Volume"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
@@ -458,6 +466,21 @@ body.night .i-s { color: rgba(30,215,96,0.6); }
   <div id="night"></div>
 </div>
 
+<script>
+// Report load errors to the server (docker logs echo-dashboard) — the Echo has no dev tools.
+(function () {
+  function send(msg) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open('POST', '/api/log', true);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.send(JSON.stringify({ msg: String(msg).slice(0, 500), ua: navigator.userAgent }));
+    } catch (e) {}
+  }
+  window.onerror = function (m, src, line, col) { send(m + ' @' + (src || '').split('/').pop() + ':' + line + ':' + col); };
+  window.addEventListener('unhandledrejection', function (e) { send('promise: ' + (e.reason && (e.reason.stack || e.reason))); });
+})();
+</script>
 <script src="/app.js"></script>
 </body>
 </html>

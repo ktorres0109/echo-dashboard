@@ -88,15 +88,28 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+// localStorage can be missing or throw in some kiosk WebViews; fall back to memory so the page still runs.
+const store = (() => {
+  const mem = {};
+  let ls = null;
+  try { ls = window.localStorage; ls.setItem('_t', '1'); ls.removeItem('_t'); } catch (e) { ls = null; }
+  return {
+    ok: !!ls,
+    get: k => { try { return ls ? ls.getItem(k) : (k in mem ? mem[k] : null); } catch (e) { return null; } },
+    set: (k, v) => { try { if (ls) ls.setItem(k, v); else mem[k] = String(v); } catch (e) {} },
+    del: k => { try { if (ls) ls.removeItem(k); else delete mem[k]; } catch (e) {} }
+  };
+})();
+
 // ── Spotify auth ───────────────────────────────────────────
-let spAccessToken  = localStorage.getItem('sp_access_token')  || null;
-let spRefreshToken = localStorage.getItem('sp_refresh_token') || null;
-let spTokenExpiry  = parseInt(localStorage.getItem('sp_token_expiry') || '0');
-if ((localStorage.getItem('sp_scopes') || '') !== SP_SCOPES) clearSpotifyTokens();
+let spAccessToken  = store.get('sp_access_token')  || null;
+let spRefreshToken = store.get('sp_refresh_token') || null;
+let spTokenExpiry  = parseInt(store.get('sp_token_expiry') || '0');
+if ((store.get('sp_scopes') || '') !== SP_SCOPES) clearSpotifyTokens();
 
 function clearSpotifyTokens() {
   spAccessToken = spRefreshToken = null; spTokenExpiry = 0;
-  ['sp_access_token', 'sp_refresh_token', 'sp_token_expiry'].forEach(k => localStorage.removeItem(k));
+  ['sp_access_token', 'sp_refresh_token', 'sp_token_expiry'].forEach(k => store.del(k));
 }
 function isConnected() { return !!(spAccessToken || spRefreshToken); }
 function showConnectButton() {
@@ -106,7 +119,7 @@ function showConnectButton() {
 
 function startSpotifyOAuth() {
   const state = Math.random().toString(36).slice(2);
-  localStorage.setItem('sp_oauth_state', state);
+  store.set('sp_oauth_state', state);
   const params = new URLSearchParams({
     client_id: CFG.client_id, response_type: 'code',
     redirect_uri: CFG.redirect_uri, scope: SP_SCOPES, state
@@ -117,13 +130,13 @@ function startSpotifyOAuth() {
 async function handleOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code'), state = params.get('state');
-  if (code && state === localStorage.getItem('sp_oauth_state')) {
+  if (code && state === store.get('sp_oauth_state')) {
     const r = await fetch('/api/spotify/token', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code })
     });
     if (r.ok) saveSpotifyTokens(await r.json());
-    localStorage.removeItem('sp_oauth_state');
+    store.del('sp_oauth_state');
   }
   // Spotify redirects to /local/dashboard.html, the refresh button adds ?_= — land back on the clean kiosk URL.
   if (window.location.search || window.location.pathname !== '/dashboard.html') {
@@ -155,10 +168,10 @@ function saveSpotifyTokens(d) {
   spAccessToken = d.access_token;
   if (d.refresh_token) spRefreshToken = d.refresh_token;
   spTokenExpiry = Date.now() + (d.expires_in - 60) * 1000;
-  localStorage.setItem('sp_access_token',  spAccessToken);
-  localStorage.setItem('sp_refresh_token', spRefreshToken);
-  localStorage.setItem('sp_token_expiry',  spTokenExpiry);
-  localStorage.setItem('sp_scopes',        SP_SCOPES);
+  store.set('sp_access_token',  spAccessToken);
+  store.set('sp_refresh_token', spRefreshToken);
+  store.set('sp_token_expiry',  spTokenExpiry);
+  store.set('sp_scopes',        SP_SCOPES);
   showConnectButton();
 }
 
@@ -194,19 +207,20 @@ async function sp(path, method = 'GET', body = null, retried = false) {
 // Normalises tracks and podcast episodes into one shape.
 function itemInfo(item) {
   if (!item) return { name: '', artist: '', album: '', art: '', artSmall: '' };
-  const imgs = item.type === 'episode' ? (item.images?.length ? item.images : item.show?.images || []) : (item.album?.images || []);
+  const show = item.show || {}, album = item.album || {};
+  const imgs = item.type === 'episode' ? ((item.images && item.images.length) ? item.images : show.images || []) : (album.images || []);
   const base = {
     name: item.name || '',
-    art: imgs[0]?.url || '',
-    artSmall: imgs[imgs.length - 1]?.url || ''
+    art: imgs.length ? imgs[0].url : '',
+    artSmall: imgs.length ? imgs[imgs.length - 1].url : ''
   };
   if (item.type === 'episode') {
-    return Object.assign(base, { artist: item.show?.publisher || item.show?.name || '', album: item.show?.name || '' });
+    return Object.assign(base, { artist: show.publisher || show.name || '', album: show.name || '' });
   }
   return Object.assign(base, {
-    artist: item.artists?.map(a => a.name).join(', ') || '',
-    firstArtist: item.artists?.[0]?.name || '',
-    album: item.album?.name || ''
+    artist: (item.artists || []).map(a => a.name).join(', '),
+    firstArtist: item.artists && item.artists.length ? item.artists[0].name : '',
+    album: album.name || ''
   });
 }
 
@@ -273,15 +287,15 @@ function renderQueue(data) {
   list.innerHTML = '';
   const head = text => { const h = document.createElement('div'); h.className = 'q-head'; h.textContent = text; list.appendChild(h); };
   if (data.currently_playing) { head('Now playing'); list.appendChild(queueRow(data.currently_playing, true)); }
-  if (data.queue?.length) { head('Next up'); data.queue.slice(0, 20).forEach(t => list.appendChild(queueRow(t, false))); }
-  if (!data.currently_playing && !data.queue?.length) panelMessage('Queue is empty.');
+  if (data.queue && data.queue.length) { head('Next up'); data.queue.slice(0, 20).forEach(t => list.appendChild(queueRow(t, false))); }
+  if (!data.currently_playing && !(data.queue && data.queue.length)) panelMessage('Queue is empty.');
 }
 
 const DEVICE_ICON = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>';
 async function fetchDevices() {
   panelMessage('Looking for devices…');
   const r = await sp('/me/player/devices');
-  const devices = r.data?.devices || [];
+  const devices = (r.data && r.data.devices) || [];
   if (!r.ok || !devices.length) return panelMessage('No devices found. Open Spotify on a device first.');
   const list = $('queue-list');
   list.innerHTML = '';
@@ -310,7 +324,7 @@ async function fetchDevices() {
 // "Next in queue" card under the album art — one queue call per track change.
 async function updateUpNext() {
   const r = await sp('/me/player/queue');
-  const next = r.ok ? r.data?.queue?.[0] : null;
+  const next = r.ok && r.data && r.data.queue ? r.data.queue[0] : null;
   const card = $('next-card');
   if (!next) { card.classList.add('empty'); return; }
   const info = itemInfo(next);
@@ -366,12 +380,12 @@ const WMO_DESC = {
 // Coordinates: server config (WEATHER_LAT/LON) wins, then browser geolocation, then last known.
 function getCoords() {
   if (CFG.lat != null && CFG.lon != null) return Promise.resolve({ lat: CFG.lat, lon: CFG.lon });
-  const saved = JSON.parse(localStorage.getItem('weather_coords') || 'null');
+  const saved = JSON.parse(store.get('weather_coords') || 'null');
   if (!navigator.geolocation) return Promise.resolve(saved);
   return new Promise(resolve => {
     navigator.geolocation.getCurrentPosition(pos => {
       const c = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-      localStorage.setItem('weather_coords', JSON.stringify(c));
+      store.set('weather_coords', JSON.stringify(c));
       resolve(c);
     }, () => resolve(saved), { timeout: 8000, maximumAge: 3600000 });
   });
@@ -525,7 +539,7 @@ async function togglePlay() {
   let r = await sp(`/me/player/${isPlaying ? 'play' : 'pause'}`, 'PUT');
   // No active device (Spotify went idle) → wake the last device we saw.
   if (!r.ok && r.status === 404 && isPlaying) {
-    const dev = localStorage.getItem('sp_last_device');
+    const dev = store.get('sp_last_device');
     if (dev) r = await sp('/me/player', 'PUT', { device_ids: [dev], play: true });
   }
   if (!r.ok) controlLockUntil = 0;
@@ -604,7 +618,7 @@ function updateVolSlider(val) {
 
 let volDragging = false, volTimer = null, volLockUntil = 0;
 function getClientX(e) {
-  return e.touches?.length ? e.touches[0].clientX : (e.changedTouches?.length ? e.changedTouches[0].clientX : e.clientX);
+  return e.touches && e.touches.length ? e.touches[0].clientX : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0].clientX : e.clientX);
 }
 function volScrubStart(e) {
   e.preventDefault();
@@ -659,7 +673,9 @@ function parseLrc(lrc) {
   const out = [];
   lrc.split('\n').forEach(line => {
     // A line can carry several timestamps: [00:12.30][01:40.10]text
-    const stamps = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const stamps = [], re = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
+    let m;
+    while ((m = re.exec(line))) stamps.push(m);
     const text = line.replace(/\[\d+:\d+(?:\.\d+)?\]/g, '').trim();
     if (!text) return;
     stamps.forEach(m => out.push({ time: parseInt(m[1]) * 60 + parseFloat(m[2]), text }));
@@ -668,8 +684,8 @@ function parseLrc(lrc) {
 }
 
 async function lookupLyrics(title, artist, album, dur) {
-  const toResult = d => d?.syncedLyrics ? { synced: parseLrc(d.syncedLyrics) }
-                      : d?.plainLyrics  ? { plain: d.plainLyrics.split('\n').filter(l => l.trim()) } : null;
+  const toResult = d => d && d.syncedLyrics ? { synced: parseLrc(d.syncedLyrics) }
+                      : d && d.plainLyrics  ? { plain: d.plainLyrics.split('\n').filter(l => l.trim()) } : null;
   try {
     const p = new URLSearchParams({ track_name: title, artist_name: artist });
     if (album) p.set('album_name', album);
@@ -703,7 +719,7 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
   if (trackId !== currentTrackId) return;  // song changed while we were fetching
 
   inner.innerHTML = '';
-  if (res?.synced?.length) {
+  if (res && res.synced && res.synced.length) {
     lyricsLines = res.synced;
     lyricsLines.forEach((line, i) => {
       const el = document.createElement('div');
@@ -713,7 +729,7 @@ async function fetchLyrics(trackId, title, artist, album, dur) {
     });
     if (userRequestedLyrics && !onLyricsPage) goToLyrics();
     syncLyrics(position, true);
-  } else if (res?.plain?.length) {
+  } else if (res && res.plain && res.plain.length) {
     res.plain.forEach(text => {
       const el = document.createElement('div');
       el.className = 'lyric-line plain'; el.textContent = text;
@@ -792,8 +808,9 @@ async function updateFromSpotify() {
     const info = itemInfo(item);
     const newPos = (data.progress_ms || 0) / 1000;
 
-    if (data.device?.id) localStorage.setItem('sp_last_device', data.device.id);
-    setDeviceLabel(data.device?.name || '');
+    const device = data.device || {};
+    if (device.id) store.set('sp_last_device', device.id);
+    setDeviceLabel(device.name || '');
 
     let playChanged = false;
     if (Date.now() >= controlLockUntil) {
@@ -803,7 +820,7 @@ async function updateFromSpotify() {
       repeatState = data.repeat_state || 'off';
       applyPlayUI(); applyShuffleUI(); applyLoopUI();
     }
-    const newVol = data.device?.volume_percent;
+    const newVol = device.volume_percent;
     if (newVol != null && newVol !== volume && Date.now() >= volLockUntil && !volDragging) {
       volume = newVol; updateVolSlider(volume);
     }
@@ -931,7 +948,7 @@ function isNight() {
 function updateNight() {
   document.body.classList.toggle('night', isNight());
   const dim = isNight() && Date.now() > nightWakeUntil;
-  $('night').style.opacity = dim ? String(CFG.night_dim ?? 0.6) : '0';
+  $('night').style.opacity = dim ? String(CFG.night_dim != null ? CFG.night_dim : 0.6) : '0';
 }
 document.addEventListener('touchstart', () => {
   if (isNight()) { nightWakeUntil = Date.now() + 30000; updateNight(); }
@@ -942,11 +959,11 @@ function sayHello() {
   fetch('/api/hello', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
-                           ua: navigator.userAgent, connected: isConnected() })
+                           ua: navigator.userAgent, connected: isConnected(), storage: store.ok })
   }).catch(() => {});
 }
 
-// ── Hard refresh (bottom-right button) ─────────────────────
+// ── Hard refresh (top-right button) ────────────────────────
 function hardRefresh() {
   $('refresh-btn').classList.add('spin');
   // cache-busting query so the WebView can't serve a stale copy

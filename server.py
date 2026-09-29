@@ -114,9 +114,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, b'{"error":"bad json"}')
         if path == "/api/hello":
             # Each dashboard reports its screen once per load, so we can see what the Echo really is.
-            info = {k: data.get(k) for k in ("w", "h", "dpr", "connected")}
+            info = {k: data.get(k) for k in ("w", "h", "dpr", "connected", "storage")}
             ua = str(data.get("ua", ""))[:200]
             sys.stderr.write(f"device {self.client_ip()} {info} ua={ua}\n")
+            return self.send(204, b"")
+        if path == "/api/log":
+            # JS errors from the page (the Echo has no dev tools to look at).
+            msg = str(data.get("msg", ""))[:500].replace("\n", " ")
+            ua = str(data.get("ua", ""))[:200]
+            sys.stderr.write(f"page-error {self.client_ip()} {msg} ua={ua}\n")
             return self.send(204, b"")
         if path == "/api/spotify/token" and isinstance(data.get("code"), str):
             status, body = spotify_token({"grant_type": "authorization_code",
