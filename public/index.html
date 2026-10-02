@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Echo Dashboard</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* Spotify-style Now Playing for Echo Show.
    Design canvas is 960 × --h (480 on an Echo Show 5); app.js scales #stage to fill the screen. */
@@ -18,6 +18,7 @@
   --mute: rgba(255,255,255,0.5);
   --accent: 83, 83, 83;      /* album colour, set from the artwork */
   --ly: 72, 72, 72;          /* lyrics background colour */
+  --clock-font: 'Inter', 'Helvetica Neue', Arial, sans-serif;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -115,11 +116,11 @@ button { font-family: inherit; color: inherit; }
 
 /* Clock — the big thing */
 .clock-row { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.clock { display: flex; align-items: flex-start; line-height: 0.86; font-variant-numeric: tabular-nums; }
-#time-hm { font-size: calc(var(--h, 480px) * 0.26); font-weight: 800; letter-spacing: -4px; }
+.clock { display: flex; align-items: flex-start; line-height: 0.86; font-family: var(--clock-font); font-variant-numeric: tabular-nums; }
+#time-hm { font-size: calc(var(--h, 480px) * 0.26); font-weight: 500; letter-spacing: -6px; }
 .clock-side { display: flex; flex-direction: column; margin: 8px 0 0 10px; gap: 6px; }
-#time-s { font-size: calc(var(--h, 480px) * 0.09); font-weight: 800; color: var(--green); line-height: 1; letter-spacing: -1px; }
-#time-ampm { font-size: 17px; font-weight: 800; color: var(--sub); letter-spacing: 0.5px; }
+#time-s { font-size: calc(var(--h, 480px) * 0.09); font-weight: 600; color: var(--green); line-height: 1; letter-spacing: -1px; }
+#time-ampm { font-size: 17px; font-weight: 600; color: var(--sub); letter-spacing: 0.5px; }
 .clock-meta { display: flex; align-items: baseline; gap: 14px; min-width: 0; white-space: nowrap; }
 #date { font-size: 16px; font-weight: 700; color: var(--sub); }
 .weather { font-size: 16px; font-weight: 500; color: var(--mute); }
@@ -273,7 +274,7 @@ button { font-family: inherit; color: inherit; }
 #vol-sheet svg { fill: #fff; flex-shrink: 0; }
 #vol-pct { font-size: 13px; font-weight: 700; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* ── Idle clock: black screen, dim text (a night-light clock) ── */
+/* ── Clock screen: bright by day, dim night-light in clock-only/night hours ── */
 #idle {
   position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; background: #000;
   display: flex; align-items: center; justify-content: center;
@@ -282,17 +283,53 @@ button { font-family: inherit; color: inherit; }
 #idle.show { opacity: 1; pointer-events: auto; }
 body.idle .pages { opacity: 0; transform: scale(0.94); }
 #idle-inner { display: flex; flex-direction: column; align-items: center; transition: transform 8s cubic-bezier(.4,0,.2,1); }
-#idle-time { display: flex; align-items: flex-start; line-height: 0.85; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.32); }
-.i-hm { font-size: calc(var(--h, 480px) * 0.42); font-weight: 800; letter-spacing: -10px; }
+#idle-date { font-size: 26px; font-weight: 700; color: rgba(255,255,255,0.7); margin-bottom: 6px; }
+#idle-time { display: flex; align-items: flex-start; line-height: 0.85; font-family: var(--clock-font); font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.95); }
+.i-hm { font-size: calc(var(--h, 480px) * 0.4); font-weight: 500; letter-spacing: -10px; }
 .i-side { display: flex; flex-direction: column; margin: 0.35em 0 0 14px; gap: 8px; font-size: calc(var(--h, 480px) * 0.1); }
-.i-s { font-weight: 700; color: var(--green); line-height: 1; opacity: 0.3; }
-.i-ampm { font-size: 0.34em; font-weight: 700; color: rgba(255,255,255,0.2); letter-spacing: 1px; }
-#idle-date { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.2); margin-top: 18px; }
-#idle-weather { font-size: 20px; font-weight: 500; color: rgba(255,255,255,0.16); margin-top: 8px; }
-#idle.show #idle-time    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) both; }
-#idle.show #idle-date    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.15s both; }
-#idle.show #idle-weather { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.3s both; }
+.i-s { font-weight: 600; color: var(--green); line-height: 1; }
+.i-ampm { font-size: 0.34em; font-weight: 600; color: rgba(255,255,255,0.55); letter-spacing: 1px; }
+#idle-weather { font-size: 20px; font-weight: 500; color: rgba(255,255,255,0.5); margin-top: 14px; }
+#quick { display: flex; gap: 10px; margin-top: 22px; }
+#quick:empty { display: none; }
+.quick-tile {
+  display: flex; align-items: center; gap: 10px; width: 190px; padding: 0 12px 0 0; overflow: hidden;
+  background: rgba(255,255,255,0.08); border: none; border-radius: 6px; cursor: pointer;
+  font-size: 14px; font-weight: 700; text-align: left; color: #fff;
+}
+.quick-tile:active { transform: scale(0.96); background: rgba(255,255,255,0.16); }
+.quick-tile span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-art { width: 52px; height: 52px; flex-shrink: 0; background: #282828; }
+.quick-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.liked-art { display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #450af5, #8e8ee5); }
+.liked-art svg { width: 45%; height: 45%; fill: #fff; }
+/* night: dim grey on black, no buttons — just a clock */
+body.dimclock #idle-date    { color: rgba(255,255,255,0.2); }
+body.dimclock #idle-time    { color: rgba(255,255,255,0.32); }
+body.dimclock .i-s          { opacity: 0.3; }
+body.dimclock .i-ampm       { color: rgba(255,255,255,0.2); }
+body.dimclock #idle-weather { color: rgba(255,255,255,0.16); }
+body.dimclock #quick        { display: none; }
+#idle.show #idle-date    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) both; }
+#idle.show #idle-time    { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.1s both; }
+#idle.show #idle-weather { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.25s both; }
+#idle.show #quick        { animation: clockIn 1.4s cubic-bezier(.2,.8,.2,1) 0.35s both; }
 @keyframes clockIn { from { opacity: 0; transform: translateY(24px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* ── Screen off: all black, any tap wakes it ── */
+#screen-off { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 200; background: #000; opacity: 0; pointer-events: none; transition: opacity 2s ease; }
+#screen-off.show { opacity: 1; pointer-events: auto; }
+
+/* ── Toast ── */
+#toast {
+  position: absolute; left: 50%; bottom: 28px; z-index: 150; transform: translate(-50%, 20px);
+  background: #fff; color: #000; font-size: 14px; font-weight: 700; padding: 10px 18px; border-radius: 8px;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.25s; white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+.lib-row { cursor: pointer; }
+.lib-row:active { background: rgba(255,255,255,0.08); }
+.lib-reconnect { cursor: pointer; text-decoration: underline; }
 
 /* ── Night dimming, status, refresh ── */
 #night { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #000; opacity: 0; pointer-events: none; z-index: 90; transition: opacity 3s ease; }
@@ -340,13 +377,13 @@ body.idle #refresh-btn { opacity: 0.12; }
 
       <div class="np-right">
         <div class="clock-row">
-          <div class="clock">
-            <span id="time-hm">12:00</span>
-            <span class="clock-side"><span id="time-s">00</span><span id="time-ampm">AM</span></span>
-          </div>
           <div class="clock-meta">
             <div id="date"></div>
             <div class="weather"><span id="w-icon"></span><span id="w-temp"></span><span id="w-desc"></span></div>
+          </div>
+          <div class="clock">
+            <span id="time-hm">12:00</span>
+            <span class="clock-side"><span id="time-s">00</span><span id="time-ampm">AM</span></span>
           </div>
         </div>
 
@@ -381,6 +418,7 @@ body.idle #refresh-btn { opacity: 0.12; }
             <button class="connect-btn" id="sp-connect-btn" onclick="startSpotifyOAuth()">Connect Spotify</button>
             <div class="bar-icons">
               <button class="lyrics-pill" id="lyrics-btn-main" onclick="goToLyrics()"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>Lyrics</button>
+              <button class="icon-btn lib-btn" onclick="toggleLibrary()" title="Your Library"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 22a1 1 0 0 1-1-1V3a1 1 0 0 1 2 0v18a1 1 0 0 1-1 1zm6.5 0a1 1 0 0 1-1-1V3a1 1 0 0 1 2 0v18a1 1 0 0 1-1 1zm11.07-.06a1 1 0 0 1-1.28-.6L13.06 4.1a1 1 0 1 1 1.88-.68l6.23 17.24a1 1 0 0 1-.6 1.28z"/></svg></button>
               <button class="icon-btn queue-btn" onclick="toggleQueue()" title="Queue"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg></button>
               <button class="icon-btn" onclick="openDevices()" title="Devices"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg></button>
               <button class="icon-btn vol-btn" onclick="toggleVol()" title="Volume"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
@@ -450,19 +488,22 @@ body.idle #refresh-btn { opacity: 0.12; }
   </div>
 
   <!-- Idle clock -->
-  <div id="idle" onclick="wakeFromIdle()">
+  <div id="idle" onclick="peekPlayer()">
     <div id="idle-inner">
-      <div id="idle-time"></div>
       <div id="idle-date"></div>
+      <div id="idle-time"></div>
       <div id="idle-weather"></div>
+      <div id="quick"></div>
     </div>
   </div>
+  <div id="toast"></div>
 
   <div id="status-dot" title="Connection problem"></div>
   <button id="refresh-btn" onclick="hardRefresh()" title="Refresh">
     <svg width="20" height="20" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
   </button>
   <div id="night"></div>
+  <div id="screen-off" onclick="wakeScreen()"></div>
 </div>
 
 <script>

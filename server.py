@@ -30,6 +30,9 @@ WEATHER_LON = os.environ.get("WEATHER_LON") or None
 NIGHT_START = os.environ.get("NIGHT_START", "23")
 NIGHT_END = os.environ.get("NIGHT_END", "7")
 NIGHT_DIM = os.environ.get("NIGHT_DIM", "0.6")
+# Clock-only hours: just a dim clock, screen off 10 min after the last touch (0.5 → 8.5 = 12:30am–8:30am).
+CLOCK_ONLY_START = os.environ.get("CLOCK_ONLY_START", "0.5")
+CLOCK_ONLY_END = os.environ.get("CLOCK_ONLY_END", "8.5")
 
 # Paths the kiosk or Spotify's redirect may hit → file in public/
 ROUTES = {
@@ -99,7 +102,9 @@ class Handler(BaseHTTPRequestHandler):
                     "lon": float(WEATHER_LON) if WEATHER_LON else None,
                     "night_start": float(NIGHT_START) if NIGHT_START else None,
                     "night_end": float(NIGHT_END) if NIGHT_END else None,
-                    "night_dim": float(NIGHT_DIM or 0.6)}
+                    "night_dim": float(NIGHT_DIM or 0.6),
+                    "clock_start": float(CLOCK_ONLY_START) if CLOCK_ONLY_START else None,
+                    "clock_end": float(CLOCK_ONLY_END) if CLOCK_ONLY_END else None}
             return self.send(200, json.dumps(body).encode())
         if path == "/healthz":
             return self.send(200, b"ok", "text/plain")

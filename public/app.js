@@ -5,9 +5,12 @@
 // ── Config (filled from /api/config) ───────────────────────
 let CFG = { client_id: '', redirect_uri: '', lat: null, lon: null, version: '' };
 const SP_API    = 'https://api.spotify.com/v1';
-// Must stay identical across versions so tokens saved on the Echo keep working.
-const SP_SCOPES = 'user-read-playback-state user-read-currently-playing user-library-read user-library-modify user-modify-playback-state';
-const IDLE_AFTER_MS = 60 * 60 * 1000;
+// Scopes asked for on connect. Tokens from older versions keep working; the scopes a
+// token actually has are saved in sp_scopes (playlists need playlist-read-private).
+const SP_SCOPES = 'user-read-playback-state user-read-currently-playing user-library-read user-library-modify user-modify-playback-state playlist-read-private';
+const CLOCK_AFTER_MS = 2 * 60 * 1000;    // daytime: clock once nothing has played for 2 min
+const OFF_AFTER_MS   = 10 * 60 * 1000;   // screen goes black after 10 min with no touch (and no music by day)
+const PEEK_MS        = 60 * 1000;        // tapping the clock shows the player for a minute
 
 // ── State ──────────────────────────────────────────────────
 let isPlaying = false, isShuffle = false, isLiked = false, repeatState = 'off';
@@ -18,7 +21,8 @@ let isDragging = false, activeScrubber = 'main';
 let onLyricsPage = false, queueOpen = false, userRequestedLyrics = false;
 let currentTrackId = null, currentItemType = 'track';
 let controlLockUntil = 0;                // ignore polled play/shuffle/repeat right after a tap
-let idleSince = Date.now(), idleShown = false;
+let screenMode = 'player';             // 'player' | 'clock' | 'off'
+let lastTouch = Date.now(), lastMusic = Date.now(), peekUntil = 0;
 
 const $ = id => document.getElementById(id);
 const $$ = sel => document.querySelectorAll(sel);
@@ -80,7 +84,7 @@ function renderProgress(pos, dur) {
   });
 }
 function frame() {
-  if (!isDragging && !document.hidden && !idleShown) {
+  if (!isDragging && !document.hidden && screenMode === 'player') {
     position = currentPos();
     renderProgress(position, duration);
     if (onLyricsPage) syncLyrics(position);
@@ -105,11 +109,10 @@ const store = (() => {
 let spAccessToken  = store.get('sp_access_token')  || null;
 let spRefreshToken = store.get('sp_refresh_token') || null;
 let spTokenExpiry  = parseInt(store.get('sp_token_expiry') || '0');
-if ((store.get('sp_scopes') || '') !== SP_SCOPES) clearSpotifyTokens();
 
 function clearSpotifyTokens() {
   spAccessToken = spRefreshToken = null; spTokenExpiry = 0;
-  ['sp_access_token', 'sp_refresh_token', 'sp_token_expiry'].forEach(k => store.del(k));
+  ['sp_access_token', 'sp_refresh_token', 'sp_token_expiry', 'sp_scopes'].forEach(k => store.del(k));
 }
 function isConnected() { return !!(spAccessToken || spRefreshToken); }
 function showConnectButton() {
@@ -171,7 +174,7 @@ function saveSpotifyTokens(d) {
   store.set('sp_access_token',  spAccessToken);
   store.set('sp_refresh_token', spRefreshToken);
   store.set('sp_token_expiry',  spTokenExpiry);
-  store.set('sp_scopes',        SP_SCOPES);
+  if (d.scope) store.set('sp_scopes', d.scope);
   showConnectButton();
 }
 
@@ -229,22 +232,24 @@ let panelMode = null;
 function openPanel(mode) {
   panelMode = mode;
   queueOpen = true;
-  $('panel-title').textContent = mode === 'devices' ? 'Connect to a device' : 'Queue';
+  $('panel-title').textContent = { devices: 'Connect to a device', library: 'Your Library' }[mode] || 'Queue';
   $('queue-list').innerHTML = '';
   $('queue-panel').classList.add('open');
   $('queue-backdrop').classList.add('open');
   $$('.queue-btn').forEach(b => b.classList.toggle('active', mode === 'queue'));
-  if (mode === 'devices') fetchDevices(); else fetchQueue();
+  $$('.lib-btn').forEach(b => b.classList.toggle('active', mode === 'library'));
+  if (mode === 'devices') fetchDevices(); else if (mode === 'library') showLibrary(); else fetchQueue();
 }
 function closePanel() {
   panelMode = null;
   queueOpen = false;
   $('queue-panel').classList.remove('open');
   $('queue-backdrop').classList.remove('open');
-  $$('.queue-btn').forEach(b => b.classList.remove('active'));
+  $$('.queue-btn, .lib-btn').forEach(b => b.classList.remove('active'));
 }
 function toggleQueue() { if (panelMode === 'queue') closePanel(); else openPanel('queue'); }
 function openDevices() { if (isConnected()) openPanel('devices'); }
+function toggleLibrary() { if (panelMode === 'library') closePanel(); else openPanel('library'); }
 
 function panelMessage(text) {
   const m = document.createElement('div');
@@ -533,7 +538,6 @@ function lockControls() { controlLockUntil = Date.now() + 1500; }
 function pollSoon(...delays) { delays.forEach(d => setTimeout(updateFromSpotify, d)); }
 
 async function togglePlay() {
-  wakeFromIdle();
   const p = currentPos();
   isPlaying = !isPlaying; setBase(p); applyPlayUI(); lockControls();
   let r = await sp(`/me/player/${isPlaying ? 'play' : 'pause'}`, 'PUT');
@@ -769,29 +773,158 @@ function syncLyrics(pos, force) {
   inner.scrollTo({ top: Math.max(0, target), behavior: force ? 'auto' : 'smooth' });
 }
 
-// ── Idle clock (nothing playing for 60 min) ────────────────
-function updateIdle() {
-  if (isPlaying || queueOpen || isDragging) idleSince = Date.now();
-  const shouldShow = Date.now() - idleSince > IDLE_AFTER_MS;
-  if (shouldShow !== idleShown) {
-    idleShown = shouldShow;
-    $('idle').classList.toggle('show', shouldShow);
-    document.body.classList.toggle('idle', shouldShow);
-    if (shouldShow) { closePanel(); if (volOpen) toggleVol(); }
+// ── Screen modes ───────────────────────────────────────────
+// player → clock → off. Daytime: the clock appears once nothing has played for 2 min,
+// and the screen goes black after 10 min with no music and no touch.
+// Clock-only hours (CLOCK_ONLY_START–END, 12:30–8:30 by default): a dim clock, even with
+// music on, and black 10 min after the last touch. A tap wakes it; tapping the clock
+// shows the player for a minute.
+function inWindow(s, e) {
+  if (s == null || e == null || s === e) return false;
+  const now = new Date();
+  const h = now.getHours() + now.getMinutes() / 60;
+  return s < e ? (h >= s && h < e) : (h >= s || h < e);
+}
+function isClockOnly() { return inWindow(CFG.clock_start, CFG.clock_end); }
+
+function wantedMode() {
+  const now = Date.now(), clockOnly = isClockOnly();
+  if (isPlaying) lastMusic = now;
+  if (isDragging || volDragging || queueOpen) lastTouch = now;
+  const idleFor = clockOnly ? now - lastTouch : now - Math.max(lastTouch, lastMusic);
+  if (idleFor > OFF_AFTER_MS) return 'off';
+  if (now < peekUntil) return 'player';
+  if (clockOnly) return 'clock';
+  return (isPlaying || now - lastMusic < CLOCK_AFTER_MS) ? 'player' : 'clock';
+}
+
+function updateScreen() {
+  const mode = wantedMode();
+  document.body.classList.toggle('dimclock', isClockOnly() || isNight());
+  if (mode !== screenMode) {
+    screenMode = mode;
+    $('idle').classList.toggle('show', mode === 'clock');
+    $('screen-off').classList.toggle('show', mode === 'off');
+    document.body.classList.toggle('idle', mode !== 'player');
+    if (mode !== 'player') { closePanel(); if (volOpen) toggleVol(); }
     updateNight();
   }
-  if (idleShown) {
+  if (mode === 'clock') {
     // drift a little every minute so nothing sits on the same pixels all night
     const n = Math.floor(Date.now() / 60000);
-    $('idle-inner').style.transform = `translate(${(n * 37) % 80 - 40}px, ${(n * 23) % 50 - 25}px)`;
+    $('idle-inner').style.transform = `translate(${(n * 37) % 60 - 30}px, ${(n * 23) % 30 - 15}px)`;
   }
 }
-function wakeFromIdle() {
-  idleSince = Date.now();
-  updateIdle();
+function peekPlayer() { peekUntil = Date.now() + PEEK_MS; lastTouch = Date.now(); updateScreen(); }
+function wakeScreen() { lastTouch = Date.now(); updateScreen(); }
+
+// While the screen is off, the waking tap must not also press whatever is underneath,
+// so only the black overlay's own click (wakeScreen) counts it.
+function noteTouch() {
+  if (screenMode === 'off') return;
+  lastTouch = Date.now();
+  if (screenMode === 'player') peekUntil = Math.max(peekUntil, Date.now() + PEEK_MS);
 }
-document.addEventListener('touchstart', () => { if (!idleShown) idleSince = Date.now(); }, { passive: true });
-document.addEventListener('mousedown',  () => { if (!idleShown) idleSince = Date.now(); });
+document.addEventListener('touchstart', noteTouch, { passive: true });
+document.addEventListener('mousedown', noteTouch);
+
+// ── Library + quick play ───────────────────────────────────
+let libraryItems = [], spUserId = null;
+function hasScope(scope) { return (store.get('sp_scopes') || '').split(' ').indexOf(scope) >= 0; }
+
+async function loadLibrary() {
+  if (!isConnected()) { libraryItems = []; renderQuickPlay(); return; }
+  if (!spUserId) { const me = await sp('/me'); if (me.ok && me.data) spUserId = me.data.id; }
+  const items = [];
+  if (spUserId) items.push({ name: 'Liked Songs', sub: 'Playlist', uri: 'spotify:user:' + spUserId + ':collection', liked: true });
+  const r = await sp('/me/playlists?limit=50');
+  ((r.ok && r.data && r.data.items) || []).forEach(pl => {
+    if (!pl || !pl.uri) return;
+    const imgs = pl.images || [];
+    items.push({ name: pl.name, sub: 'Playlist' + (pl.owner && pl.owner.display_name ? ' · ' + pl.owner.display_name : ''),
+                 uri: pl.uri, art: imgs.length ? imgs[imgs.length - 1].url : '' });
+  });
+  libraryItems = items;
+  renderQuickPlay();
+  if (panelMode === 'library') showLibrary();
+}
+
+function libArt(item, cls) {
+  const box = document.createElement('div');
+  box.className = cls + (item.liked ? ' liked-art' : '');
+  if (item.liked) box.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
+  else if (item.art) { const img = document.createElement('img'); img.src = item.art; box.appendChild(img); }
+  return box;
+}
+
+function showLibrary() {
+  if (!isConnected()) return panelMessage('Connect Spotify to see your library.');
+  if (!libraryItems.length) { panelMessage('Loading…'); return; }
+  const list = $('queue-list');
+  list.innerHTML = '';
+  libraryItems.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'queue-item lib-row';
+    const txt = document.createElement('div');
+    txt.className = 'queue-item-info';
+    const t = document.createElement('div'); t.className = 'queue-item-title'; t.textContent = item.name;
+    const a = document.createElement('div'); a.className = 'queue-item-artist'; a.textContent = item.sub;
+    txt.append(t, a);
+    row.append(libArt(item, 'queue-item-art'), txt);
+    row.onclick = () => { closePanel(); playContext(item.uri); };
+    list.appendChild(row);
+  });
+  if (!hasScope('playlist-read-private')) {
+    const m = document.createElement('div');
+    m.className = 'q-msg lib-reconnect';
+    m.textContent = 'Private playlists missing? Tap to reconnect Spotify.';
+    m.onclick = startSpotifyOAuth;
+    list.appendChild(m);
+  }
+}
+
+// Liked Songs + the first three playlists, on the daytime clock.
+function renderQuickPlay() {
+  const box = $('quick');
+  box.innerHTML = '';
+  libraryItems.slice(0, 4).forEach(item => {
+    const tile = document.createElement('button');
+    tile.className = 'quick-tile';
+    const name = document.createElement('span');
+    name.textContent = item.name;
+    tile.append(libArt(item, 'quick-art'), name);
+    tile.onclick = e => { e.stopPropagation(); playContext(item.uri); };
+    box.appendChild(tile);
+  });
+}
+
+async function pickDevice() {
+  const r = await sp('/me/player/devices');
+  const devs = (r.data && r.data.devices) || [];
+  const last = store.get('sp_last_device');
+  const d = devs.filter(x => x.id === last)[0] || devs[0];
+  return d ? d.id : null;
+}
+async function playContext(uri) {
+  showToast('Starting…');
+  let r = await sp('/me/player/play', 'PUT', { context_uri: uri });
+  // Nothing active (Spotify went idle) → start it on the last device we saw, or any device.
+  if (!r.ok && r.status === 404) {
+    const dev = await pickDevice();
+    if (dev) r = await sp('/me/player/play?device_id=' + encodeURIComponent(dev), 'PUT', { context_uri: uri });
+  }
+  if (r.ok) { hideToast(); peekPlayer(); pollSoon(500, 1500, 3000); }
+  else showToast(r.status === 404 ? 'Open Spotify on a phone or computer first' : 'Couldn’t start playback');
+}
+
+let toastTimer = null;
+function showToast(text) {
+  $('toast').textContent = text;
+  $('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 4000);
+}
+function hideToast() { $('toast').classList.remove('show'); }
 
 // ── Spotify poller ─────────────────────────────────────────
 let pollInFlight = false;
@@ -846,7 +979,6 @@ async function updateFromSpotify() {
       }
       if (panelMode === 'queue') fetchQueue();
       updateUpNext();
-      wakeFromIdle();
     }
 
     // Only re-anchor the smooth ticker when it drifts, so the bar never jumps backwards.
@@ -861,12 +993,13 @@ async function updateFromSpotify() {
 function nextPollDelay() {
   if (document.hidden) return 15000;
   if (!isConnected()) return 10000;
-  if (idleShown) return 5000;
+  if (screenMode === 'off') return 10000;
+  if (screenMode === 'clock') return 5000;
   return isPlaying ? 1000 : 3000;
 }
 async function pollLoop() {
   await updateFromSpotify();
-  updateIdle();                 // music starting again wakes the clock screen right away
+  updateScreen();               // music starting again brings the player back right away
   setTimeout(pollLoop, Math.max(nextPollDelay(), rateLimitedUntil - Date.now()));
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) updateFromSpotify(); });
@@ -906,7 +1039,7 @@ document.addEventListener('touchstart', e => {
 }, { passive: true });
 
 document.addEventListener('touchend', e => {
-  if (!touch0 || isDragging || volDragging || queueOpen || idleShown) { touch0 = null; return; }
+  if (!touch0 || isDragging || volDragging || queueOpen || screenMode !== 'player') { touch0 = null; return; }
   const t = e.changedTouches[0];
   const dx = t.clientX - touch0.x, dy = t.clientY - touch0.y;
   const art = inArt(touch0.target);
@@ -939,17 +1072,11 @@ function likeFromArt(artEl) {
 // ── Night dimming ──────────────────────────────────────────
 // Between NIGHT_START and NIGHT_END (server config) the whole screen dims; a tap brightens it for 30s.
 let nightWakeUntil = 0;
-function isNight() {
-  const s = CFG.night_start, e = CFG.night_end;
-  if (s == null || e == null || s === e) return false;
-  const now = new Date();
-  const h = now.getHours() + now.getMinutes() / 60;
-  return s < e ? (h >= s && h < e) : (h >= s || h < e);
-}
+function isNight() { return inWindow(CFG.night_start, CFG.night_end); }
 function updateNight() {
   document.body.classList.toggle('night', isNight());
   // The idle clock is already dimmed itself; don't stack the night overlay on it.
-  const dim = isNight() && !idleShown && Date.now() > nightWakeUntil;
+  const dim = isNight() && screenMode === 'player' && Date.now() > nightWakeUntil;
   $('night').style.opacity = dim ? String(CFG.night_dim != null ? CFG.night_dim : 0.6) : '0';
 }
 document.addEventListener('touchstart', () => {
@@ -988,7 +1115,9 @@ applyLikeUI();
   updateNight();
   setInterval(updateNight, 5000);
   setInterval(updateWeather, 15 * 60 * 1000);
-  setInterval(updateIdle, 5000);
+  setInterval(updateScreen, 1000);
+  loadLibrary();
+  setInterval(loadLibrary, 30 * 60 * 1000);
   setInterval(checkVersion, 5 * 60 * 1000);
   requestAnimationFrame(frame);
   pollLoop();
